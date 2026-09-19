@@ -9,8 +9,11 @@ import { SetupGuide } from './components/SetupGuide';
 
 const LOCAL_STORAGE_KEY_QUESTIONS = 'telegram_quiz_bot_questions_v1';
 
+export type SyncStatus = 'synced' | 'saving' | 'offline';
+
 export default function App() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('simulator');
+  const [syncStatus, setSyncStatus] = useState<SyncStatus>('synced');
 
   // Load questions from localStorage or fallback to defaults
   const [questions, setQuestions] = useState<Question[]>(() => {
@@ -28,24 +31,67 @@ export default function App() {
     return DEFAULT_QUESTIONS;
   });
 
+  // Синхронизация при первом открытии страницы: загружаем актуальные вопросы с сервера (/api/questions)
+  useEffect(() => {
+    fetch('/api/questions')
+      .then((res) => {
+        if (res.ok) return res.json();
+        throw new Error('API unavailable');
+      })
+      .then((serverQuestions: Question[]) => {
+        if (Array.isArray(serverQuestions) && serverQuestions.length > 0) {
+          setQuestions(serverQuestions);
+          try {
+            localStorage.setItem(LOCAL_STORAGE_KEY_QUESTIONS, JSON.stringify(serverQuestions));
+          } catch {
+            // ignore
+          }
+          setSyncStatus('synced');
+        }
+      })
+      .catch(() => {
+        // Если API недоступен, остаемся на localStorage
+        setSyncStatus('offline');
+      });
+  }, []);
+
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState<number>(-1);
   const [scores, setScores] = useState<Record<string, UserScore>>({});
   const [registeredUserIds, setRegisteredUserIds] = useState<string[]>([]);
 
-  // Save questions changes to localStorage
+  // Сохраняем вопросы в React state, localStorage и на сервер (/api/questions -> data/questions.json)
   const handleUpdateQuestions = (newQuestions: Question[]) => {
     setQuestions(newQuestions);
+    setSyncStatus('saving');
+
     try {
       localStorage.setItem(LOCAL_STORAGE_KEY_QUESTIONS, JSON.stringify(newQuestions));
     } catch {
       // ignore
     }
+
+    fetch('/api/questions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(newQuestions),
+    })
+      .then((res) => {
+        if (res.ok) {
+          setSyncStatus('synced');
+        } else {
+          setSyncStatus('offline');
+        }
+      })
+      .catch(() => {
+        setSyncStatus('offline');
+      });
   };
 
   const handleResetToDefaults = () => {
     if (confirm('Сбросить вопросы к стандартным примерам? Ваши изменения будут заменены.')) {
-      setQuestions(DEFAULT_QUESTIONS);
-      localStorage.removeItem(LOCAL_STORAGE_KEY_QUESTIONS);
+      handleUpdateQuestions(DEFAULT_QUESTIONS);
       setCurrentQuestionIndex(-1);
       setScores({});
       setRegisteredUserIds([]);
@@ -64,6 +110,7 @@ export default function App() {
         activeTab={activeTab}
         onSelectTab={setActiveTab}
         questionsCount={questions.length}
+        syncStatus={syncStatus}
       />
 
       <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6">

@@ -1,0 +1,32 @@
+version: '3.8'
+
+services:
+  # 🌐 Веб-интерфейс (Конструктор вопросов + Симулятор + API)
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: quiz_web_ui
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - NODE_ENV=production
+
+  # 🤖 Telegram-бот (aiogram 3)
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile.bot
+    container_name: quiz_telegram_bot
+    restart: unless-stopped
+    depends_on:
+      - web
+    volumes:
+      - ./data:/app/data
+    environment:
+      - BOT_TOKEN=${BOT_TOKEN}
+      - QUESTIONS_FILE_PATH=/app/data/questions.json
+      - QUESTIONS_API_URL=http://web:3000/api/questions

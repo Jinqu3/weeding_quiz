@@ -1,14 +1,22 @@
 import { useState } from 'react';
 import { Question } from '../types';
-import { generateBotPy, generateRequirementsTxt, generateEnvExample, generateReadmeMd } from '../utils/pythonCodeGenerator';
-import { Copy, Check, Download, FileCode, ShieldAlert, BookOpen, Terminal, Sparkles, Key, HelpCircle } from 'lucide-react';
+import { 
+  generateBotPy, 
+  generateRequirementsTxt, 
+  generateEnvExample, 
+  generateReadmeMd,
+  generateDockerComposeYml,
+  generateDockerfile,
+  generateDockerfileBot
+} from '../utils/pythonCodeGenerator';
+import { Copy, Check, Download, FileCode, ShieldAlert, BookOpen, Terminal, Sparkles, Key, HelpCircle, Container } from 'lucide-react';
 
 interface CodeViewerProps {
   questions: Question[];
 }
 
 export function CodeViewer({ questions }: CodeViewerProps) {
-  const [activeTab, setActiveTab] = useState<'bot' | 'req' | 'env' | 'readme'>('bot');
+  const [activeTab, setActiveTab] = useState<'bot' | 'req' | 'env' | 'compose' | 'dockerfile_web' | 'dockerfile_bot' | 'readme'>('bot');
   const [copied, setCopied] = useState(false);
   const [userToken, setUserToken] = useState('');
   const [inlineToken, setInlineToken] = useState(false);
@@ -17,11 +25,20 @@ export function CodeViewer({ questions }: CodeViewerProps) {
   const requirementsTxt = generateRequirementsTxt();
   const envExample = generateEnvExample(userToken);
   const readmeMd = generateReadmeMd();
+  const dockerComposeYml = generateDockerComposeYml(userToken);
+  const dockerfileWeb = generateDockerfile();
+  const dockerfileBot = generateDockerfileBot();
 
   const getActiveCode = () => {
     switch (activeTab) {
       case 'bot':
         return { filename: 'bot.py', content: botPyCode };
+      case 'compose':
+        return { filename: 'docker-compose.yml', content: dockerComposeYml };
+      case 'dockerfile_web':
+        return { filename: 'Dockerfile', content: dockerfileWeb };
+      case 'dockerfile_bot':
+        return { filename: 'Dockerfile.bot', content: dockerfileBot };
       case 'req':
         return { filename: 'requirements.txt', content: requirementsTxt };
       case 'env':
@@ -216,19 +233,53 @@ export function CodeViewer({ questions }: CodeViewerProps) {
           <div className="flex items-center gap-1.5 overflow-x-auto">
             <button
               onClick={() => setActiveTab('bot')}
-              className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+              className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap ${
                 activeTab === 'bot'
                   ? 'bg-indigo-600 text-white shadow-xs'
                   : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
               }`}
             >
               <FileCode className="w-3.5 h-3.5" />
-              bot.py (Основной код)
+              bot.py (Синхронизированный бот)
+            </button>
+
+            <button
+              onClick={() => setActiveTab('compose')}
+              className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap ${
+                activeTab === 'compose'
+                  ? 'bg-sky-600 text-white shadow-xs'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+              }`}
+            >
+              <Container className="w-3.5 h-3.5 text-sky-400" />
+              docker-compose.yml
+            </button>
+
+            <button
+              onClick={() => setActiveTab('dockerfile_web')}
+              className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap ${
+                activeTab === 'dockerfile_web'
+                  ? 'bg-sky-600 text-white shadow-xs'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+              }`}
+            >
+              Dockerfile (UI)
+            </button>
+
+            <button
+              onClick={() => setActiveTab('dockerfile_bot')}
+              className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap ${
+                activeTab === 'dockerfile_bot'
+                  ? 'bg-sky-600 text-white shadow-xs'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+              }`}
+            >
+              Dockerfile.bot
             </button>
 
             <button
               onClick={() => setActiveTab('req')}
-              className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+              className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap ${
                 activeTab === 'req'
                   ? 'bg-indigo-600 text-white shadow-xs'
                   : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
@@ -239,7 +290,7 @@ export function CodeViewer({ questions }: CodeViewerProps) {
 
             <button
               onClick={() => setActiveTab('env')}
-              className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+              className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap ${
                 activeTab === 'env'
                   ? 'bg-indigo-600 text-white shadow-xs'
                   : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
@@ -250,7 +301,7 @@ export function CodeViewer({ questions }: CodeViewerProps) {
 
             <button
               onClick={() => setActiveTab('readme')}
-              className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+              className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap ${
                 activeTab === 'readme'
                   ? 'bg-indigo-600 text-white shadow-xs'
                   : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'

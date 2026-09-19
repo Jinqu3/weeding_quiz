@@ -47,10 +47,12 @@ if not BOT_TOKEN:
 # =====================================================================
 
 import asyncio
+import json
 import logging
 import os
 import random
 import sys
+import urllib.request
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set
 from dotenv import load_dotenv
@@ -71,10 +73,61 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ==========================================
-# 1. БАЗА ВОПРОСОВ И ЮМОР КАЗИНО
+# 1. БАЗА ВОПРОСОВ И ДИНАМИЧЕСКАЯ СИНХРОНИЗАЦИЯ (ФАЙЛ / DOCKER / UI API)
 # ==========================================
 
-QUESTIONS: List[dict] = ${questionsJson}
+QUESTIONS_FILE_PATH = os.getenv("QUESTIONS_FILE_PATH", "data/questions.json")
+QUESTIONS_API_URL = os.getenv("QUESTIONS_API_URL", "http://localhost:3000/api/questions")
+
+# Резервная база вопросов (встроенная в код)
+EMBEDDED_QUESTIONS: List[dict] = ${questionsJson}
+QUESTIONS: List[dict] = list(EMBEDDED_QUESTIONS)
+
+def load_questions_from_source() -> int:
+    """Динамическая загрузка актуальных вопросов из файла (Docker volume) или API веб-интерфейса."""
+    global QUESTIONS
+
+    # 1. Проверяем локальный файл data/questions.json или указанный через переменные
+    possible_paths = [
+        QUESTIONS_FILE_PATH,
+        "data/questions.json",
+        "../data/questions.json",
+        "questions.json"
+    ]
+    for p in possible_paths:
+        if p and os.path.exists(p):
+            try:
+                with open(p, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    if isinstance(data, list) and len(data) > 0:
+                        QUESTIONS = data
+                        logger.info(f"✅ Вопросы успешно загружены из {p} ({len(QUESTIONS)} шт.)")
+                        return len(QUESTIONS)
+            except Exception as e:
+                logger.warning(f"Ошибка чтения {p}: {e}")
+
+    # 2. Если файл не найден, пробуем получить из Web UI API
+    if QUESTIONS_API_URL:
+        try:
+            req = urllib.request.Request(
+                QUESTIONS_API_URL,
+                headers={"User-Agent": "TelegramQuizBot/1.0", "Accept": "application/json"}
+            )
+            with urllib.request.urlopen(req, timeout=3) as resp:
+                if resp.status == 200:
+                    data = json.loads(resp.read().decode("utf-8"))
+                    if isinstance(data, list) and len(data) > 0:
+                        QUESTIONS = data
+                        logger.info(f"✅ Вопросы успешно синхронизированы через API {QUESTIONS_API_URL} ({len(QUESTIONS)} шт.)")
+                        return len(QUESTIONS)
+        except Exception as e:
+            logger.debug(f"API {QUESTIONS_API_URL} недоступен: {e}")
+
+    return len(QUESTIONS)
+
+# Первичная загрузка вопросов при старте бота
+load_questions_from_source()
+
 
 # Шутки крупье при правильном ответе на общий вопрос
 GENERAL_JOKES = [
@@ -394,6 +447,9 @@ async def cmd_next(message: Message):
             )
             return
 
+        # Автоматическая синхронизация: перед выдачей следующего вопроса проверяем обновления из UI / файла
+        load_questions_from_source()
+
         state.current_index += 1
 
         # Если вопросы закончились
@@ -494,6 +550,16 @@ async def cmd_current(message: Message):
         f"💰 На кону: +{q['points']} фишек (CasinoCoins 🪙)\\n"
         f"📊 Статус: ставок сделано <b>{answered_count} из {total_reg}</b>\\n"
         f"⏳ Ждём ставки: <i>{waiting_str}</i>"
+    )
+
+@router.message(Command("reload", "sync"))
+async def cmd_reload(message: Message):
+    """Синхронизация вопросов из UI / data/questions.json без перезапуска бота."""
+    count = load_questions_from_source()
+    await message.reply(
+        f"🔄 <b>Вопросы синхронизированы с UI!</b>\\n\\n"
+        f"📚 Всего вопросов в базе: <b>{count}</b>\\n"
+        f"<i>Все изменения, добавленные в веб-интерфейсе, уже применились к боту.</i>"
     )
 
 @router.message(Command("stat"))
@@ -888,5 +954,93 @@ python bot.py
 - \`/current\` — текущий вопрос, статус ответов (кого ещё ждём)
 - \`/stat\` — баланс фишек для казино по каждому игроку
 - \`/reset\` — сбросить банкролл и регистрацию
+- \`/reload\` — перезагрузить вопросы из UI без перезапуска бота
+- \`/leave\` — выйти из-за стола с сохранением очков
 `;
 }
+
+export function generateDockerComposeYml(customToken?: string): string {
+  const tokenVal = customToken?.trim() || '${BOT_TOKEN}';
+  return `version: '3.8'
+
+services:
+  # 🌐 Веб-интерфейс: Конструктор вопросов, Симулятор чата и API
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: quiz_web_ui
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      # Общая папка для мгновенной синхронизации вопросов
+      - ./data:/app/data
+    environment:
+      - NODE_ENV=production
+
+  # 🤖 Telegram-бот на aiogram 3.x
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile.bot
+    container_name: quiz_telegram_bot
+    restart: unless-stopped
+    depends_on:
+      - web
+    volumes:
+      # Тот же том: бот сразу читает вопросы, созданные в UI!
+      - ./data:/app/data
+    environment:
+      - BOT_TOKEN=${tokenVal}
+      - QUESTIONS_FILE_PATH=/app/data/questions.json
+      - QUESTIONS_API_URL=http://web:3000/api/questions
+`;
+}
+
+export function generateDockerfile(): string {
+  return `FROM node:20-alpine AS builder
+
+WORKDIR /app
+
+COPY package*.json ./
+RUN npm install
+
+COPY . .
+RUN npm run build
+
+FROM node:20-alpine AS runner
+WORKDIR /app
+
+ENV NODE_ENV=production
+ENV PORT=3000
+
+COPY package*.json ./
+RUN npm install --omit=dev
+
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/data ./data
+
+EXPOSE 3000
+
+CMD ["node", "dist/server.cjs"]
+`;
+}
+
+export function generateDockerfileBot(): string {
+  return `FROM python:3.11-slim
+
+WORKDIR /app
+
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY bot.py .
+
+CMD ["python", "bot.py"]
+`;
+}
+

@@ -140,6 +140,58 @@ export function SetupGuide() {
     },
     {
       number: '05',
+      title: 'Запуск в Docker (Веб-интерфейс + Бот с авто-синхронизацией)',
+      icon: <Terminal className="w-5 h-5 text-sky-600" />,
+      highlight: true,
+      content: (
+        <div className="space-y-3 text-xs text-slate-700">
+          <div className="bg-sky-50 border border-sky-200 p-3 rounded-lg text-sky-950">
+            <b>🐳 Всё в одном:</b> При запуске через Docker Compose поднимаются сразу 2 сервиса:
+            <ul className="list-disc list-inside mt-1 space-y-0.5">
+              <li><b>web (порт 3000):</b> этот визуальный редактор вопросов и REST API.</li>
+              <li><b>bot (в фоне):</b> Telegram-бот на Python (aiogram 3), непрерывно слушающий чаты.</li>
+              <li><b>Общий том (./data):</b> любые вопросы, созданные или отредактированные в веб-интерфейсе, сохраняются в <code className="bg-sky-100 font-bold px-1 rounded">data/questions.json</code> и мгновенно доступны боту!</li>
+            </ul>
+          </div>
+
+          <p className="font-semibold text-slate-900">Команды для запуска в Docker на вашем сервере или компьютере:</p>
+
+          <div className="bg-slate-900 text-slate-100 p-3 rounded-lg font-mono space-y-2">
+            <div className="flex items-center justify-between text-slate-400 text-[10px]">
+              <span>Запуск в фоновом режиме (-d):</span>
+              <button
+                onClick={() =>
+                  copyToClipboard(
+                    '# 1. Задайте токен вашего бота\nexport BOT_TOKEN="ваш_токен_от_BotFather"\n\n# 2. Запустите всё одной командой в фоне\ndocker compose up -d --build\n\n# 3. Просмотр логов бота\ndocker compose logs -f bot',
+                    5
+                  )
+                }
+                className="hover:text-white"
+              >
+                {copiedIndex === 5 ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
+              </button>
+            </div>
+            <p className="text-emerald-400"># 1. Задайте токен Telegram бота (или запишите в .env):</p>
+            <p className="text-amber-300">echo 'BOT_TOKEN="ваш_токен_от_BotFather"' &gt; .env</p>
+            <p className="text-emerald-400 mt-2"># 2. Запустите в фоне (работает 24/7 даже при закрытии терминала):</p>
+            <p className="text-sky-300 font-bold">docker compose up -d --build</p>
+            <p className="text-emerald-400 mt-2"># 3. Просмотр логов бота в реальном времени:</p>
+            <p>docker compose logs -f bot</p>
+            <p className="text-emerald-400 mt-2"># 4. Остановка контейнеров:</p>
+            <p>docker compose down</p>
+          </div>
+
+          <div className="bg-slate-100 p-2.5 rounded-lg border border-slate-200">
+            <span className="font-bold text-slate-900">🌐 Как попасть в Веб-интерфейс на сервере:</span>
+            <p className="text-slate-600 mt-0.5">
+              Откройте в браузере <code className="bg-white px-1.5 py-0.5 rounded border font-mono text-indigo-700 font-bold">http://IP_ВАШЕГО_СЕРВЕРА:3000</code>. Все добавленные вопросы сразу запишутся в файл и передадутся боту!
+            </p>
+          </div>
+        </div>
+      )
+    },
+    {
+      number: '06',
       title: 'Проведение викторины в чате',
       icon: <CheckCircle2 className="w-5 h-5 text-violet-600" />,
       content: (

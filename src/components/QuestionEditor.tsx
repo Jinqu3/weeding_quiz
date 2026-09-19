@@ -154,6 +154,19 @@ export function QuestionEditor({
         </div>
       </div>
 
+      {/* Live Sync & Docker Reassurance Banner */}
+      <div className="bg-gradient-to-r from-emerald-50 to-teal-50 border border-emerald-200 rounded-xl p-3.5 flex items-start gap-3 text-xs text-emerald-950">
+        <span className="text-base flex-shrink-0">🔄</span>
+        <div className="flex-1 space-y-0.5">
+          <p className="font-bold text-emerald-900">
+            Мгновенная синхронизация с Telegram-ботом и Docker:
+          </p>
+          <p className="text-emerald-800">
+            Любое добавление, редактирование или изменение порядка сохраняется в общий файл <code className="bg-emerald-100/70 text-emerald-900 px-1 py-0.2 rounded font-mono font-bold">data/questions.json</code>. Telegram-бот автоматически подхватывает изменения при каждом вызове <code className="bg-emerald-100/70 text-emerald-900 px-1 py-0.2 rounded font-mono font-bold">/next</code> или по команде <code className="bg-emerald-100/70 text-emerald-900 px-1 py-0.2 rounded font-mono font-bold">/reload</code> без перезапуска контейнера!
+          </p>
+        </div>
+      </div>
+
       {/* Editor Modal / Inline Form */}
       {(isAddingNew || editingId) && (
         <div className="bg-indigo-50/40 border-2 border-indigo-200 rounded-xl p-6 shadow-sm space-y-5 animate-in fade-in duration-200">
