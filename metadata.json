@@ -1,0 +1,6 @@
+{
+  "name": "Telegram Quiz Bot Studio (aiogram)",
+  "description": "Интерактивный симулятор, конструктор вопросов и генератор готового Python-кода для Telegram-бота викторины на aiogram 3 с режимами общих ответов и скорости.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
