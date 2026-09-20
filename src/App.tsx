@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Question, UserScore } from './types';
+import { Question, UserScore, DbStatus } from './types';
 import { DEFAULT_QUESTIONS } from './data/mockData';
 import { Header, ActiveTab } from './components/Header';
 import { TelegramSimulator } from './components/TelegramSimulator';
@@ -14,6 +14,7 @@ export type SyncStatus = 'synced' | 'saving' | 'offline';
 export default function App() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('simulator');
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('synced');
+  const [dbStatus, setDbStatus] = useState<DbStatus | null>(null);
 
   // Load questions from localStorage or fallback to defaults
   const [questions, setQuestions] = useState<Question[]>(() => {
@@ -31,8 +32,20 @@ export default function App() {
     return DEFAULT_QUESTIONS;
   });
 
+  // Функция обновления статуса БД
+  const refreshDbStatus = () => {
+    fetch('/api/db/status')
+      .then(res => res.ok ? res.json() : null)
+      .then(data => {
+        if (data) setDbStatus(data);
+      })
+      .catch(() => {});
+  };
+
   // Синхронизация при первом открытии страницы: загружаем актуальные вопросы с сервера (/api/questions)
   useEffect(() => {
+    refreshDbStatus();
+
     fetch('/api/questions')
       .then((res) => {
         if (res.ok) return res.json();
@@ -80,6 +93,7 @@ export default function App() {
       .then((res) => {
         if (res.ok) {
           setSyncStatus('synced');
+          refreshDbStatus();
         } else {
           setSyncStatus('offline');
         }
@@ -133,6 +147,8 @@ export default function App() {
             onUpdateQuestions={handleUpdateQuestions}
             onResetToDefaults={handleResetToDefaults}
             currentQuestionIndex={currentQuestionIndex}
+            dbStatus={dbStatus}
+            onRefreshDbStatus={refreshDbStatus}
           />
         )}
 

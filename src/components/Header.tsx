@@ -1,4 +1,4 @@
-import { MessageSquare, ListPlus, Code2, BookOpen, Bot, RefreshCw, CheckCircle2, HardDrive } from 'lucide-react';
+import { MessageSquare, ListPlus, Code2, BookOpen, Bot, RefreshCw, CheckCircle2, HardDrive, Database } from 'lucide-react';
 
 export type ActiveTab = 'simulator' | 'questions' | 'code' | 'guide';
 
@@ -33,8 +33,13 @@ export function Header({ activeTab, onSelectTab, questionsCount, syncStatus = 's
                 </span>
                 
                 {/* Sync with Bot status */}
+                <span className="text-[10px] bg-slate-100 text-slate-700 font-bold px-2 py-0.5 rounded-md border border-slate-200 flex items-center gap-1" title="База данных SQLite (data/quiz.db)">
+                  <Database className="w-3 h-3 text-indigo-600" />
+                  <span>SQLite БД</span>
+                </span>
+
                 {syncStatus === 'synced' && (
-                  <span className="text-[10px] bg-emerald-50 text-emerald-700 font-bold px-2 py-0.5 rounded-md border border-emerald-200 flex items-center gap-1" title="Вопросы синхронизированы в data/questions.json для Telegram-бота">
+                  <span className="text-[10px] bg-emerald-50 text-emerald-700 font-bold px-2 py-0.5 rounded-md border border-emerald-200 flex items-center gap-1" title="Вопросы синхронизированы в data/quiz.db и data/questions.json для Telegram-бота">
                     <CheckCircle2 className="w-3 h-3 text-emerald-600" />
                     <span>Синхронизировано с ботом</span>
                   </span>

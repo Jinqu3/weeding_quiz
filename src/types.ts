@@ -9,6 +9,16 @@ export interface Question {
   explanation?: string;
 }
 
+export interface DbStatus {
+  connected: boolean;
+  engine: string;
+  dbPath: string;
+  jsonBackupPath: string;
+  totalQuestions: number;
+  sizeBytes: number;
+  sizeKb: string;
+}
+
 export interface SimUser {
   id: string;
   name: string;

@@ -150,7 +150,7 @@ export function SetupGuide() {
             <ul className="list-disc list-inside mt-1 space-y-0.5">
               <li><b>web (порт 3000):</b> этот визуальный редактор вопросов и REST API.</li>
               <li><b>bot (в фоне):</b> Telegram-бот на Python (aiogram 3), непрерывно слушающий чаты.</li>
-              <li><b>Общий том (./data):</b> любые вопросы, созданные или отредактированные в веб-интерфейсе, сохраняются в <code className="bg-sky-100 font-bold px-1 rounded">data/questions.json</code> и мгновенно доступны боту!</li>
+              <li><b>Общий том (./data):</b> любые вопросы, созданные или отредактированные в веб-интерфейсе, сохраняются в SQLite БД <code className="bg-sky-100 font-bold px-1 rounded">data/quiz.db</code> и резервный <code className="bg-sky-100 font-bold px-1 rounded">data/questions.json</code> и мгновенно доступны боту!</li>
             </ul>
           </div>
 

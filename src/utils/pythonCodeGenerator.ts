@@ -51,6 +51,7 @@ import json
 import logging
 import os
 import random
+import sqlite3
 import sys
 import urllib.request
 from dataclasses import dataclass, field
@@ -73,9 +74,10 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ==========================================
-# 1. БАЗА ВОПРОСОВ И ДИНАМИЧЕСКАЯ СИНХРОНИЗАЦИЯ (ФАЙЛ / DOCKER / UI API)
+# 1. БАЗА ВОПРОСОВ И ДИНАМИЧЕСКАЯ СИНХРОНИЗАЦИЯ (БД SQLITE / ФАЙЛ / API)
 # ==========================================
 
+QUESTIONS_DB_PATH = os.getenv("QUESTIONS_DB_PATH", "data/quiz.db")
 QUESTIONS_FILE_PATH = os.getenv("QUESTIONS_FILE_PATH", "data/questions.json")
 QUESTIONS_API_URL = os.getenv("QUESTIONS_API_URL", "http://localhost:3000/api/questions")
 
@@ -84,10 +86,56 @@ EMBEDDED_QUESTIONS: List[dict] = ${questionsJson}
 QUESTIONS: List[dict] = list(EMBEDDED_QUESTIONS)
 
 def load_questions_from_source() -> int:
-    """Динамическая загрузка актуальных вопросов из файла (Docker volume) или API веб-интерфейса."""
+    """Динамическая загрузка актуальных вопросов из базы данных SQLite (data/quiz.db), JSON-файла или API."""
     global QUESTIONS
 
-    # 1. Проверяем локальный файл data/questions.json или указанный через переменные
+    # 1. Проверяем наличие базы данных SQLite (data/quiz.db)
+    possible_db_paths = [
+        QUESTIONS_DB_PATH,
+        "data/quiz.db",
+        "../data/quiz.db",
+        "quiz.db"
+    ]
+    for db_p in possible_db_paths:
+        if db_p and os.path.exists(db_p):
+            try:
+                conn = sqlite3.connect(db_p)
+                cursor = conn.cursor()
+                cursor.execute("SELECT id, text, type, points, answers, explanation FROM questions ORDER BY sort_order ASC, rowid ASC")
+                rows = cursor.fetchall()
+                conn.close()
+                if rows:
+                    parsed_list = []
+                    for row in rows:
+                        ans_raw = row[4]
+                        if isinstance(ans_raw, str) and ans_raw.startswith("["):
+                            try:
+                                answers = json.loads(ans_raw)
+                            except Exception:
+                                answers = [a.strip() for a in ans_raw.split(",") if a.strip()]
+                        elif isinstance(ans_raw, str):
+                            answers = [a.strip() for a in ans_raw.split(",") if a.strip()]
+                        elif isinstance(ans_raw, list):
+                            answers = ans_raw
+                        else:
+                            answers = [str(ans_raw)]
+
+                        parsed_list.append({
+                            "id": str(row[0]),
+                            "text": str(row[1]),
+                            "type": str(row[2]),
+                            "points": int(row[3]) if row[3] else 10,
+                            "answers": answers,
+                            "explanation": str(row[5] or "")
+                        })
+                    if parsed_list:
+                        QUESTIONS = parsed_list
+                        logger.info(f"🗄️ Вопросы успешно загружены из SQLite БД {db_p} ({len(QUESTIONS)} шт.)")
+                        return len(QUESTIONS)
+            except Exception as e:
+                logger.warning(f"Ошибка чтения SQLite БД {db_p}: {e}")
+
+    # 2. Проверяем локальный файл data/questions.json или указанный через переменные
     possible_paths = [
         QUESTIONS_FILE_PATH,
         "data/questions.json",
@@ -106,7 +154,7 @@ def load_questions_from_source() -> int:
             except Exception as e:
                 logger.warning(f"Ошибка чтения {p}: {e}")
 
-    # 2. Если файл не найден, пробуем получить из Web UI API
+    # 3. Если файл не найден, пробуем получить из Web UI API
     if QUESTIONS_API_URL:
         try:
             req = urllib.request.Request(
