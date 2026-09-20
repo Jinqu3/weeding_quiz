@@ -2,7 +2,6 @@ import express from "express";
 import path from "path";
 import fs from "fs";
 import { createServer as createViteServer } from "vite";
-import { GoogleGenAI } from "@google/genai";
 
 const DEFAULT_QUESTIONS_BACKUP = [
   {
@@ -47,6 +46,16 @@ const DEFAULT_QUESTIONS_BACKUP = [
   },
   {
     id: "q6",
+    text: "Сколько секунд длится раунд в классическом мужском профессиональном боксе?",
+    type: "choice",
+    options: ["120 секунд (2 мин)", "180 секунд (3 мин)", "240 секунд (4 мин)", "300 секунд (5 мин)"],
+    correctOptionIndex: 1,
+    points: 15,
+    answers: ["2", "2)", "180", "180 секунд", "180 секунд (3 мин)", "б"],
+    explanation: "Классический раунд в мужском профессиональном боксе длится ровно 3 минуты (180 секунд)."
+  },
+  {
+    id: "q7",
     text: "⚡ [НА СКОРОСТЬ] Сколько секунд в ровно 3 минутах?",
     type: "first",
     points: 15,
@@ -54,7 +63,7 @@ const DEFAULT_QUESTIONS_BACKUP = [
     explanation: "В одной минуте 60 секунд. 3 × 60 = 180."
   },
   {
-    id: "q7",
+    id: "q8",
     text: "Какое озеро является самым глубоким на планете Земля?",
     type: "general",
     points: 15,
@@ -62,7 +71,17 @@ const DEFAULT_QUESTIONS_BACKUP = [
     explanation: "Максимальная глубина пресноводного озера Байкал составляет 1642 метра."
   },
   {
-    id: "q8",
+    id: "q9",
+    text: "Какая денежная единица является официальной валютой Японии?",
+    type: "choice",
+    options: ["Юань", "Вона", "Иена", "Рупия"],
+    correctOptionIndex: 2,
+    points: 15,
+    answers: ["3", "3)", "иена", "йена", "yen", "в"],
+    explanation: "Национальной валютой Японии является иена (JPY), введённая в 1871 году."
+  },
+  {
+    id: "q10",
     text: "⚡ [НА СКОРОСТЬ] Какое число в рулетке европейского казино окрашено в зелёный цвет?",
     type: "first",
     points: 20,
@@ -70,7 +89,7 @@ const DEFAULT_QUESTIONS_BACKUP = [
     explanation: "В европейской рулетке ровно один зелёный сектор — Зеро (0). В американской их два: 0 и 00."
   },
   {
-    id: "q9",
+    id: "q11",
     text: "Какой океан является самым большим по площади на Земле?",
     type: "general",
     points: 10,
@@ -78,7 +97,7 @@ const DEFAULT_QUESTIONS_BACKUP = [
     explanation: "Тихий океан занимает более трети всей поверхности планеты Земля."
   },
   {
-    id: "q10",
+    id: "q12",
     text: "⚡ [ФИНАЛ НА СКОРОСТЬ] Сколько карт в стандартной классической покерной колоде (без джокеров)?",
     type: "first",
     points: 30,
@@ -99,6 +118,8 @@ interface DbQuestion {
   answers: string[];
   explanation?: string;
   sort_order?: number;
+  options?: string[];
+  correctOptionIndex?: number;
 }
 
 let sqliteDb: any = null;
@@ -124,9 +145,16 @@ async function initDatabase(): Promise<void> {
             answers TEXT NOT NULL,
             explanation TEXT DEFAULT '',
             sort_order INTEGER NOT NULL,
+            options TEXT DEFAULT '',
             created_at TEXT DEFAULT CURRENT_TIMESTAMP
           );
         `);
+
+        // Безопасная миграция: добавляем колонку options, если база была создана ранее
+        try {
+          sqliteDb.exec("ALTER TABLE questions ADD COLUMN options TEXT DEFAULT ''");
+        } catch {}
+
         console.log("✅ SQLite database connected successfully at:", DB_FILE);
       } else {
         sqliteDb = null;
@@ -152,7 +180,17 @@ function loadQuestionsFromStorage(): DbQuestion[] {
   // 1. Try reading from SQLite DB
   if (sqliteDb) {
     try {
-      const query = sqliteDb.prepare("SELECT id, text, type, points, answers, explanation, sort_order FROM questions ORDER BY sort_order ASC, rowid ASC");
+      let hasOptionsCol = false;
+      try {
+        const pragma = sqliteDb.prepare("PRAGMA table_info(questions)").all();
+        hasOptionsCol = pragma.some((c: any) => c.name === "options");
+      } catch {}
+
+      const selectSql = hasOptionsCol
+        ? "SELECT id, text, type, points, answers, explanation, sort_order, options FROM questions ORDER BY sort_order ASC, rowid ASC"
+        : "SELECT id, text, type, points, answers, explanation, sort_order FROM questions ORDER BY sort_order ASC, rowid ASC";
+
+      const query = sqliteDb.prepare(selectSql);
       const rows = query.all();
       if (rows && rows.length > 0) {
         return rows.map((row: any) => {
@@ -164,6 +202,16 @@ function loadQuestionsFromStorage(): DbQuestion[] {
           } catch {
             parsedAnswers = [String(row.answers || "")];
           }
+
+          let parsedOptions: string[] | undefined = undefined;
+          if (row.options) {
+            try {
+              if (typeof row.options === "string" && row.options.startsWith("[")) {
+                parsedOptions = JSON.parse(row.options);
+              }
+            } catch {}
+          }
+
           return {
             id: String(row.id),
             text: String(row.text),
@@ -171,7 +219,8 @@ function loadQuestionsFromStorage(): DbQuestion[] {
             points: Number(row.points) || 10,
             answers: parsedAnswers,
             explanation: row.explanation ? String(row.explanation) : "",
-            sort_order: Number(row.sort_order) || 0
+            sort_order: Number(row.sort_order) || 0,
+            options: parsedOptions
           };
         });
       }
@@ -213,12 +262,13 @@ function saveQuestionsToStorage(questions: DbQuestion[]): void {
       sqliteDb.exec("BEGIN TRANSACTION;");
       sqliteDb.exec("DELETE FROM questions;");
       const insert = sqliteDb.prepare(`
-        INSERT INTO questions (id, text, type, points, answers, explanation, sort_order)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO questions (id, text, type, points, answers, explanation, sort_order, options)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `);
       questions.forEach((q, idx) => {
         const id = q.id || `q_${Date.now()}_${idx}`;
         const answersJson = JSON.stringify(Array.isArray(q.answers) ? q.answers : [String(q.answers || "")]);
+        const optionsJson = JSON.stringify(Array.isArray(q.options) ? q.options : []);
         insert.run(
           id,
           q.text || "",
@@ -226,7 +276,8 @@ function saveQuestionsToStorage(questions: DbQuestion[]): void {
           Number(q.points) || 10,
           answersJson,
           q.explanation || "",
-          idx
+          idx,
+          optionsJson
         );
       });
       sqliteDb.exec("COMMIT;");
@@ -248,21 +299,24 @@ function insertSingleQuestionToDb(question: Partial<DbQuestion>): DbQuestion {
       ? (question.answers as string).split(",").map(a => a.trim()).filter(Boolean)
       : ["Ответ"];
 
+  const options = Array.isArray(question.options) && question.options.length > 0 ? question.options : undefined;
+
   const newQuestion: DbQuestion = {
     id: newId,
     text: question.text || "Новый вопрос викторины",
-    type: question.type === "first" ? "first" : "general",
+    type: question.type || "general",
     points: Number(question.points) || 10,
     answers: answers.length > 0 ? answers : ["Ответ"],
     explanation: question.explanation || "",
-    sort_order: current.length
+    sort_order: current.length,
+    options
   };
 
   if (sqliteDb) {
     try {
       const insert = sqliteDb.prepare(`
-        INSERT INTO questions (id, text, type, points, answers, explanation, sort_order)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO questions (id, text, type, points, answers, explanation, sort_order, options)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `);
       insert.run(
         newQuestion.id,
@@ -271,7 +325,8 @@ function insertSingleQuestionToDb(question: Partial<DbQuestion>): DbQuestion {
         newQuestion.points,
         JSON.stringify(newQuestion.answers),
         newQuestion.explanation,
-        newQuestion.sort_order
+        newQuestion.sort_order,
+        JSON.stringify(newQuestion.options || [])
       );
     } catch (err) {
       console.error("Failed to insert single question to SQLite:", err);
@@ -415,14 +470,18 @@ async function startServer() {
             ? item.answers
             : String(item.answers).split(",").map(a => a.trim()).filter(Boolean);
 
+          const itemType = item.type === "choice" ? "choice" : item.type === "first" ? "first" : "general";
+          const options = Array.isArray(item.options) && item.options.length > 0 ? item.options : undefined;
+
           addedItems.push({
             id: item.id || `q_${Date.now()}_${idx}`,
             text: String(item.text).trim(),
-            type: item.type === "first" ? "first" : "general",
+            type: itemType,
             points: Number(item.points) || 10,
             answers: answers.length > 0 ? answers : ["Ответ"],
             explanation: item.explanation ? String(item.explanation) : "",
-            sort_order: current.length + idx
+            sort_order: current.length + idx,
+            options
           });
         }
       });
@@ -457,6 +516,59 @@ async function startServer() {
 
   // Готовые тематические наборы вопросов (1 клик для добавления в SQLite БД)
   const CURATED_PACKS = [
+    {
+      id: "choice_tests",
+      name: "🔘 Тесты с вариантами ответов (1, 2, 3, 4)",
+      badge: "Тесты с выбором",
+      description: "Вопросы с 4 вариантами ответов: игроки нажимают инлайн-кнопки или пишут цифры 1-4 в чат.",
+      questions: [
+        {
+          text: "В каком году человек впервые совершил посадку на поверхность Луны?",
+          type: "choice",
+          options: ["1961 год", "1969 год", "1972 год", "1975 год"],
+          correctOptionIndex: 1,
+          points: 15,
+          answers: ["2", "2)", "1969", "1969 год", "б"],
+          explanation: "20 июля 1969 года американские астронавты Нил Армстронг и Базз Олдрин ступили на Луну (миссия «Аполлон-11»)."
+        },
+        {
+          text: "Какая страна является исторической родиной Олимпийских игр?",
+          type: "choice",
+          options: ["Италия", "Греция", "Франция", "Египет"],
+          correctOptionIndex: 1,
+          points: 10,
+          answers: ["2", "2)", "греция", "greece", "б"],
+          explanation: "Первые античные Олимпийские игры состоялись в древнегреческой Олимпии в 776 году до нашей эры."
+        },
+        {
+          text: "Сколько клавиш у стандартного современного концертного фортепиано?",
+          type: "choice",
+          options: ["64 клавиши", "76 клавиш", "88 клавиш", "96 клавиш"],
+          correctOptionIndex: 2,
+          points: 20,
+          answers: ["3", "3)", "88", "88 клавиш", "в"],
+          explanation: "У стандартного фортепиано ровно 88 клавиш: 52 белых и 36 черных."
+        },
+        {
+          text: "Какой химический элемент является самым распространённым во всей Вселенной?",
+          type: "choice",
+          options: ["Кислород", "Гелий", "Водород", "Углерод"],
+          correctOptionIndex: 2,
+          points: 15,
+          answers: ["3", "3)", "водород", "hydrogen", "h", "в"],
+          explanation: "Водород составляет около 75% всей элементарной массы обозримой Вселенной."
+        },
+        {
+          text: "Какое из этих животных может дремать стоя, но видит сны только лёжа?",
+          type: "choice",
+          options: ["Лошадь", "Медведь", "Слон", "Жираф"],
+          correctOptionIndex: 0,
+          points: 15,
+          answers: ["1", "1)", "лошадь", "конь", "а"],
+          explanation: "Благодаря особому суставному «запорному» аппарату лошади спят стоя, но глубокая REM-фаза со снами возможна только лёжа."
+        }
+      ]
+    },
     {
       id: "casino",
       name: "🎰 Казино, покер и азартные игры",
@@ -693,11 +805,13 @@ async function startServer() {
       const newItems: DbQuestion[] = pack.questions.map((q, idx) => ({
         id: `pack_${packId}_${Date.now()}_${idx}`,
         text: q.text,
-        type: q.type as "general" | "first",
+        type: q.type,
         points: q.points,
         answers: q.answers,
         explanation: q.explanation || "",
-        sort_order: current.length + idx
+        sort_order: current.length + idx,
+        options: (q as any).options ? [...(q as any).options] : undefined,
+        correctOptionIndex: (q as any).correctOptionIndex
       }));
 
       const updated = [...current, ...newItems];
@@ -713,163 +827,6 @@ async function startServer() {
     } catch (err) {
       console.error("Failed to install pack:", err);
       res.status(500).json({ error: "Failed to install pack" });
-    }
-  });
-
-  // POST /api/questions/generate-ai - Генерация вопросов с помощью Gemini AI
-  app.post("/api/questions/generate-ai", async (req, res) => {
-    const { topic = "Общая эрудиция", count = 5, difficulty = "medium", saveImmediately = false } = req.body || {};
-    const clampedCount = Math.max(1, Math.min(10, Number(count) || 5));
-
-    try {
-      let generatedQuestions: Array<{
-        text: string;
-        type: "general" | "first";
-        points: number;
-        answers: string[];
-        explanation: string;
-      }> = [];
-
-      // Пробуем вызвать Gemini API, если задан ключ
-      const apiKey = process.env.GEMINI_API_KEY;
-      if (apiKey) {
-        try {
-          const ai = new GoogleGenAI({ apiKey });
-          const prompt = `Ты — профессиональный ведущий викторин и крупье казино.
-Сгенерируй ровно ${clampedCount} уникальных, интересных и однозначно проверяемых вопросов для викторины в Telegram-боте.
-Тема: "${topic}".
-Уровень сложности: ${difficulty}.
-
-Требования:
-1. Чередуй типы вопросов: 'general' (обычный, баллы всем) и 'first' (вопрос на скорость, куш первому, для таких вопросов в текст добавь в начале значок ⚡ [НА СКОРОСТЬ]).
-2. Баллы (points): от 10 до 30 в зависимости от сложности.
-3. Варианты ответов (answers): массив из 2-5 строковых вариантов правильного ответа строго строчными буквами без знаков препинания (синонимы, варианты на русском и английском, если применимо).
-4. Краткое пояснение (explanation): 1-2 предложения интересного факта или комментария ведущего.
-
-Верни СТРОГО валидный JSON-массив объектов без лишнего текста и markdown:
-[
-  {
-    "text": "Текст вопроса?",
-    "type": "general",
-    "points": 15,
-    "answers": ["ответ", "синоним ответа"],
-    "explanation": "Интересный факт"
-  }
-]`;
-
-          const response = await ai.models.generateContent({
-            model: "gemini-3.8-flash",
-            contents: prompt,
-            config: {
-              responseMimeType: "application/json"
-            }
-          });
-
-          const rawText = response.text || "";
-          const parsed = JSON.parse(rawText);
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            generatedQuestions = parsed.map(item => ({
-              text: String(item.text || "").trim(),
-              type: (item.type === "first" ? "first" : "general") as "first" | "general",
-              points: Number(item.points) || 10,
-              answers: Array.isArray(item.answers)
-                ? item.answers.map((a: unknown) => String(a).toLowerCase().trim()).filter(Boolean)
-                : [String(item.answers || "ответ").toLowerCase().trim()],
-              explanation: String(item.explanation || "").trim()
-            })).filter(q => q.text && q.answers.length > 0);
-          }
-        } catch (geminiError) {
-          console.warn("Gemini API call failed, falling back to curated generator:", geminiError);
-        }
-      }
-
-      // Если Gemini не был вызван или произошла ошибка — используем качественный генератор из базы знаний
-      if (generatedQuestions.length === 0) {
-        const fallbackPool = [
-          ...CURATED_PACKS.flatMap(p => p.questions),
-          {
-            text: `Какой город является официальной столицей Канады (не Торонто и не Монреаль)?`,
-            type: "general" as const,
-            points: 15,
-            answers: ["оттава", "ottawa"],
-            explanation: "Оттава была выбрана королевой Викторией в 1857 году."
-          },
-          {
-            text: `⚡ [НА СКОРОСТЬ] Сколько струн у стандартной классической гитары?`,
-            type: "first" as const,
-            points: 10,
-            answers: ["6", "шесть", "6 струн"],
-            explanation: "У классической испанской гитары 6 нейлоновых или металлических струн."
-          },
-          {
-            text: `Какой металл находится в жидком агрегатном состоянии при комнатной температуре?`,
-            type: "general" as const,
-            points: 15,
-            answers: ["ртуть", "hg", "mercury"],
-            explanation: "Ртуть плавится при температуре -38,8°C."
-          },
-          {
-            text: `⚡ [НА СКОРОСТЬ] Как звали кота в сказке Шарля Перро, который носил кожаную обувь?`,
-            type: "first" as const,
-            points: 10,
-            answers: ["кот в сапогах", "в сапогах"],
-            explanation: "Знаменитый персонаж «Кот в сапогах»."
-          },
-          {
-            text: `В каком океане находится самая глубокая точка Земли — Марианская впадина?`,
-            type: "general" as const,
-            points: 15,
-            answers: ["тихий", "тихом", "тихий океан", "pacific"],
-            explanation: "Глубина Бездны Челленджера в Марианском желобе составляет почти 11 000 метров."
-          }
-        ];
-
-        // Фильтруем или перемешиваем
-        const shuffled = [...fallbackPool].sort(() => 0.5 - Math.random());
-        generatedQuestions = shuffled.slice(0, clampedCount).map(q => ({
-          text: q.text,
-          type: q.type as "general" | "first",
-          points: q.points,
-          answers: q.answers,
-          explanation: q.explanation || ""
-        }));
-      }
-
-      // Если пользователь запросил мгновенное сохранение в SQLite БД
-      if (saveImmediately && generatedQuestions.length > 0) {
-        const current = loadQuestionsFromStorage();
-        const newDbItems: DbQuestion[] = generatedQuestions.map((q, idx) => ({
-          id: `ai_${Date.now()}_${idx}`,
-          text: q.text,
-          type: q.type,
-          points: q.points,
-          answers: q.answers,
-          explanation: q.explanation,
-          sort_order: current.length + idx
-        }));
-
-        const updated = [...current, ...newDbItems];
-        saveQuestionsToStorage(updated);
-
-        res.json({
-          success: true,
-          questions: generatedQuestions,
-          savedCount: newDbItems.length,
-          totalCount: updated.length,
-          savedImmediately: true,
-          database: "sqlite (data/quiz.db)"
-        });
-        return;
-      }
-
-      res.json({
-        success: true,
-        questions: generatedQuestions,
-        savedImmediately: false
-      });
-    } catch (err) {
-      console.error("Failed to generate AI questions:", err);
-      res.status(500).json({ error: "Failed to generate questions" });
     }
   });
 

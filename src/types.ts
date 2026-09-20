@@ -1,10 +1,12 @@
-export type QuestionType = 'general' | 'first';
+export type QuestionType = 'general' | 'first' | 'choice';
 
 export interface Question {
   id: string;
   text: string;
-  type: QuestionType; // 'general' = баллы всем, 'first' = только первому
-  answers: string[];  // варианты правильных ответов
+  type: QuestionType; // 'general' = баллы всем, 'first' = только первому, 'choice' = тест с вариантами (1, 2, 3...)
+  options?: string[]; // варианты ответа, например ["Париж", "Рим", "Берлин", "Мадрид"]
+  correctOptionIndex?: number; // 0-based индекс верного варианта (0, 1, 2, 3...)
+  answers: string[];  // варианты правильных ответов (например ["1", "париж"])
   points: number;     // количество очков
   explanation?: string;
 }

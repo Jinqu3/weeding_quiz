@@ -311,19 +311,33 @@ export function TelegramSimulator({
       setFirstWinnerId(null);
 
       const q = questions[nextIdx];
+      const isChoice = q.type === 'choice' && Array.isArray(q.options) && q.options.length > 0;
       const isSpeed = q.type === 'first';
-      const badge = isSpeed
-        ? '⚡ <b>РАУНД НА СКОРОСТЬ!</b> (Куш заберёт первый правильный ответ!)'
-        : '🌟 <b>ОБЩИЙ РАУНД</b> (Фишки каждому правильному)';
+
+      let badge = '🌟 <b>ОБЩИЙ РАУНД</b> (Фишки каждому правильному)';
+      if (isChoice) {
+        badge = '🔘 <b>ВОПРОС С ВЫБОРОМ ВАРИАНТА</b> (Тест)';
+      } else if (isSpeed) {
+        badge = '⚡ <b>РАУНД НА СКОРОСТЬ!</b> (Куш заберёт первый правильный ответ!)';
+      }
+
       const reward = isSpeed
         ? `+${q.points} CasinoCoins 🪙 первому правильному`
         : `+${q.points} CasinoCoins 🪙 каждому`;
 
-      const instruction = isSpeed
+      let optionsBlock = '';
+      if (isChoice && q.options) {
+        const optionEmojis = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣'];
+        optionsBlock = '\n\n' + q.options.map((opt, idx) => `${optionEmojis[idx] || `${idx + 1}.`} <b>${opt}</b>`).join('\n');
+      }
+
+      const instruction = isChoice
+        ? `🔘 <i>Тест с вариантами: отправьте цифру (1, 2, 3...) прямо в чат или нажмите кнопку варианта! Ждём скрытых ответов всех ${registeredUserIds.length} игроков за столом.</i>`
+        : isSpeed
         ? '⚡ <i>Вопрос на скорость: как только поступит ПЕРВЫЙ правильный ответ — вопрос сразу завершается, ждать остальных не нужно!</i>'
         : `👥 <i>Общий раунд: ждём скрытых ставок от всех <b>${registeredUserIds.length}</b> игроков за столом, затем огласим верный ответ!</i>`;
 
-      const botText = `━━━━━━━━━━━━━━━━━━━━\n❓ <b>Вопрос ${nextIdx + 1} из ${questions.length}</b>\n${badge}\n\n<b>${q.text}</b>\n\n💰 <i>На кону: ${reward}</i>\n🪑 <i>Игроки за столом (${registeredUserIds.length} чел.): остаются до завершения всех вопросов</i>\n${instruction}\n✍️ <i>Пишите ваш ответ прямо в чат!</i>\n━━━━━━━━━━━━━━━━━━━━`;
+      const botText = `━━━━━━━━━━━━━━━━━━━━\n❓ <b>Вопрос ${nextIdx + 1} из ${questions.length}</b>\n${badge}\n\n<b>${q.text}</b>${optionsBlock}\n\n💰 <i>На кону: ${reward}</i>\n🪑 <i>Игроки за столом (${registeredUserIds.length} чел.): остаются до завершения всех вопросов</i>\n${instruction}\n✍️ <i>Пишите ваш ответ прямо в чат!</i>\n━━━━━━━━━━━━━━━━━━━━`;
       addBotMessage(botText, 'question');
       return;
     }
@@ -385,18 +399,34 @@ export function TelegramSimulator({
         addBotMessage('Сейчас нет активного вопроса. Напишите <b>/next</b>, чтобы запустить раунд.');
         return;
       }
-      const typeLabel = currentQuestion.type === 'first' ? '⚡ На скорость' : '🌟 Общий';
+      const typeLabel = currentQuestion.type === 'first'
+        ? '⚡ На скорость'
+        : currentQuestion.type === 'choice'
+        ? '🔘 С выбором ответа'
+        : '🌟 Общий';
 
       if (isRoundClosed || (currentQuestion.type === 'first' && firstWinnerId)) {
         const winnerName = firstWinnerId ? SIM_USERS.find(s => s.id === firstWinnerId)?.name : null;
+        let correctSample = currentQuestion.answers[0];
+        if (currentQuestion.type === 'choice' && currentQuestion.options) {
+          const cIdx = currentQuestion.correctOptionIndex ?? 0;
+          correctSample = `Вариант ${cIdx + 1}: ${currentQuestion.options[cIdx] || ''}`;
+        }
+
         addBotMessage(
           `🛑 <b>Вопрос №${currentQuestionIndex + 1} (${typeLabel}) ЗАКРЫТ!</b> 🏁\n\n` +
           `<b>${currentQuestion.text}</b>\n\n` +
           (winnerName ? `🏆 Победитель раунда на скорость: <b>${winnerName}</b>!\n` : '') +
-          `🎯 Правильный ответ: <b>${currentQuestion.answers[0]}</b>\n\n` +
+          `🎯 Правильный ответ: <b>${correctSample}</b>\n\n` +
           `✅ <i>Ожидание остановлено, вопрос закрыт. Крупье, отправьте команду <b>/next</b> для перехода к следующему вопросу!</i>`
         );
         return;
+      }
+
+      let optionsListText = '';
+      if (currentQuestion.type === 'choice' && currentQuestion.options) {
+        const optionEmojis = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣'];
+        optionsListText = '\n\n' + currentQuestion.options.map((opt, i) => `${optionEmojis[i] || `${i + 1}.`} <b>${opt}</b>`).join('\n');
       }
 
       if (currentQuestion.type === 'first') {
@@ -415,7 +445,7 @@ export function TelegramSimulator({
       const waitingText = waiting.length > 0 ? waiting.join(', ') : 'Все ответили!';
 
       addBotMessage(
-        `🎲 <b>Текущий вопрос №${currentQuestionIndex + 1} (${typeLabel})</b>:\n\n<b>${currentQuestion.text}</b>\n\n💰 На кону: +${currentQuestion.points} фишек (CasinoCoins 🪙)\n📊 Ставок принято: <b>${attemptedUserIds.length} из ${registeredUserIds.length}</b>\n⏳ Ждём ставки: <i>${waitingText}</i>`
+        `🎲 <b>Текущий вопрос №${currentQuestionIndex + 1} (${typeLabel})</b>:\n\n<b>${currentQuestion.text}</b>${optionsListText}\n\n💰 На кону: +${currentQuestion.points} фишек (CasinoCoins 🪙)\n📊 Ставок принято: <b>${attemptedUserIds.length} из ${registeredUserIds.length}</b>\n⏳ Ждём ставки: <i>${waitingText}</i>`
       );
       return;
     }
@@ -610,8 +640,34 @@ export function TelegramSimulator({
     setAttemptedUserIds(nextAttempted);
 
     const cleanInput = rawText.trim().toLowerCase();
-    const correctVariants = currentQuestion.answers.map(a => a.trim().toLowerCase());
-    const isCorrect = correctVariants.includes(cleanInput);
+    let isCorrect = false;
+
+    if (currentQuestion.type === 'choice' && currentQuestion.options && currentQuestion.options.length > 0) {
+      const cIdx = typeof currentQuestion.correctOptionIndex === 'number'
+        ? currentQuestion.correctOptionIndex
+        : 0;
+
+      // Извлекаем только цифры: "1", "1)", "1.", "вариант 1" -> 1
+      const numMatch = cleanInput.replace(/[^\d]/g, '');
+      const userNum = numMatch ? parseInt(numMatch, 10) : null;
+
+      const letterMap: Record<string, number> = { 'а': 1, 'б': 2, 'в': 3, 'г': 4, 'д': 5, 'a': 1, 'b': 2, 'c': 3, 'd': 4 };
+      const matchedLetterNum = letterMap[cleanInput];
+
+      const optionNum = userNum ?? matchedLetterNum;
+      const isNumCorrect = optionNum !== null && optionNum === cIdx + 1;
+
+      const targetOptText = currentQuestion.options[cIdx]?.trim().toLowerCase() || '';
+      const isOptTextCorrect = Boolean(targetOptText && cleanInput === targetOptText);
+
+      const correctVariants = currentQuestion.answers.map(a => a.trim().toLowerCase());
+      const isVariantCorrect = correctVariants.includes(cleanInput);
+
+      isCorrect = isNumCorrect || isOptTextCorrect || isVariantCorrect;
+    } else {
+      const correctVariants = currentQuestion.answers.map(a => a.trim().toLowerCase());
+      isCorrect = correctVariants.includes(cleanInput);
+    }
 
     const totalPlayers = registeredUserIds.length;
     const allAnswered = totalPlayers > 0 && registeredUserIds.every(id => nextAttempted.includes(id));
@@ -726,7 +782,15 @@ export function TelegramSimulator({
 
     // Оглашаем правильный ответ и список победителей
     setTimeout(() => {
-      const correctSample = currentQuestion.answers[0] || '';
+      let correctSample = currentQuestion.answers[0] || '';
+      if (currentQuestion.type === 'choice' && currentQuestion.options && currentQuestion.options.length > 0) {
+        const cIdx = typeof currentQuestion.correctOptionIndex === 'number'
+          ? currentQuestion.correctOptionIndex
+          : 0;
+        const optText = currentQuestion.options[cIdx] || '';
+        correctSample = `Вариант ${cIdx + 1}: ${optText}`;
+      }
+
       const expl = currentQuestion.explanation ? `\n💡 <i>${currentQuestion.explanation}</i>` : '';
       const points = currentQuestion.points;
 
@@ -911,7 +975,11 @@ export function TelegramSimulator({
           <div className="bg-amber-50/90 border-t border-amber-200 px-4 py-2.5 flex flex-wrap items-center justify-between gap-2 text-xs">
             <div className="flex items-center gap-2">
               <span className="font-bold text-amber-900">
-                {currentQuestion.type === 'first' ? '⚡ На скорость:' : '🌟 Общий вопрос:'}
+                {currentQuestion.type === 'first'
+                  ? '⚡ На скорость:'
+                  : currentQuestion.type === 'choice'
+                  ? '🔘 С выбором ответа:'
+                  : '🌟 Общий вопрос:'}
               </span>
               <span className="text-amber-800 truncate max-w-xs font-medium">
                 «{currentQuestion.text}»
@@ -933,19 +1001,36 @@ export function TelegramSimulator({
             <div className="flex items-center gap-1.5 flex-wrap">
               <span className="text-amber-700 font-medium">Тестовый клик:</span>
               <button
-                onClick={() => handleSendMessage(currentQuestion.answers[0])}
+                onClick={() => {
+                  if (currentQuestion.type === 'choice' && currentQuestion.options) {
+                    const cIdx = currentQuestion.correctOptionIndex ?? 0;
+                    handleSendMessage(String(cIdx + 1));
+                  } else {
+                    handleSendMessage(currentQuestion.answers[0]);
+                  }
+                }}
                 disabled={isRoundClosed || (currentQuestion.type === 'first' && Boolean(firstWinnerId))}
                 className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white px-2.5 py-1 rounded-md font-semibold text-[11px] shadow-xs flex items-center gap-1"
                 title="Отправить правильный ответ"
               >
                 <CheckCircle2 className="w-3 h-3" />
-                Верно: «{currentQuestion.answers[0]}»
+                {currentQuestion.type === 'choice'
+                  ? `Верно: Вариант ${(currentQuestion.correctOptionIndex ?? 0) + 1}`
+                  : `Верно: «${currentQuestion.answers[0]}»`}
               </button>
               <button
-                onClick={() => handleSendMessage('Неправильный ответ')}
+                onClick={() => {
+                  if (currentQuestion.type === 'choice' && currentQuestion.options) {
+                    const cIdx = currentQuestion.correctOptionIndex ?? 0;
+                    const wrongIdx = cIdx === 0 ? 1 : 0;
+                    handleSendMessage(String(wrongIdx + 1));
+                  } else {
+                    handleSendMessage('Неправильный ответ');
+                  }
+                }}
                 disabled={isRoundClosed || (currentQuestion.type === 'first' && Boolean(firstWinnerId))}
                 className="bg-slate-200 hover:bg-slate-300 disabled:opacity-40 text-slate-700 px-2 py-1 rounded-md font-medium text-[11px]"
-                title="Отправить неправильный ответ (проверить шутку и автозакрытие)"
+                title="Отправить неправильный ответ"
               >
                 Неверно (ошибка)
               </button>
@@ -1079,6 +1164,40 @@ export function TelegramSimulator({
             /reset
           </button>
         </div>
+
+        {/* Choice Question Interactive Option Buttons (Simulating Telegram inline buttons) */}
+        {currentQuestion?.type === 'choice' && currentQuestion.options && currentQuestion.options.length > 0 && !isRoundClosed && (
+          <div className="bg-sky-50/95 border-t border-sky-200 px-4 py-3">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-[11px] font-bold text-sky-900 flex items-center gap-1.5">
+                <span>🔘</span> Выберите вариант ответа (кнопка Telegram или отправьте цифру):
+              </span>
+              <span className="text-[10px] bg-sky-200/80 text-sky-900 font-semibold px-2 py-0.5 rounded-full">
+                {attemptedUserIds.includes(activeUser.id) ? 'Вы уже ответили ✓' : 'Сделайте ставку'}
+              </span>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {currentQuestion.options.map((optionText, optIdx) => {
+                const optNum = optIdx + 1;
+                const isSelectedByUser = attemptedUserIds.includes(activeUser.id);
+                return (
+                  <button
+                    key={optIdx}
+                    onClick={() => handleSendMessage(String(optNum))}
+                    disabled={isSelectedByUser}
+                    className="flex items-center gap-2.5 px-3 py-2 bg-white hover:bg-sky-100 disabled:opacity-50 text-slate-800 rounded-xl border border-sky-300 font-medium text-xs text-left shadow-2xs transition-all hover:scale-[1.01] active:scale-[0.99]"
+                    title={`Отправить вариант ${optNum}: ${optionText}`}
+                  >
+                    <span className="w-6 h-6 rounded-lg bg-sky-600 text-white font-bold text-xs flex items-center justify-center flex-shrink-0 shadow-2xs">
+                      {optNum}
+                    </span>
+                    <span className="truncate">{optionText}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {/* Input bar */}
         <div className="p-3 bg-white border-t border-slate-200 flex items-center gap-2">
