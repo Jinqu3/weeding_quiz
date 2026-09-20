@@ -192,6 +192,32 @@ export function SetupGuide() {
     },
     {
       number: '06',
+      title: 'Защита сайта паролем и постоянный Docker Volume (Сохранение БД)',
+      icon: <ShieldAlert className="w-5 h-5 text-emerald-600" />,
+      highlight: true,
+      content: (
+        <div className="space-y-3 text-xs text-slate-700">
+          <div className="bg-emerald-50 border border-emerald-300 p-3 rounded-xl space-y-1 text-emerald-950">
+            <p className="font-bold">🛡️ Защита от посторонних лиц:</p>
+            <p>
+              Чтобы никто в интернете не мог стереть ваши вопросы или изменить викторину, задайте пароль администратора. Вы можете сделать это прямо в интерфейсе (кнопка «Свободный доступ / Защищено паролем» в шапке) либо указать в <code className="bg-white px-1 py-0.5 rounded font-mono font-bold">.env</code>:
+            </p>
+            <div className="bg-slate-900 text-slate-100 p-2 rounded-lg font-mono text-[11px] mt-1">
+              ADMIN_PASSWORD="ваш_надёжный_пароль"
+            </div>
+          </div>
+
+          <div className="bg-sky-50 border border-sky-300 p-3 rounded-xl space-y-1 text-sky-950">
+            <p className="font-bold">💾 Постоянное сохранение базы (Docker Named Volume):</p>
+            <p>
+              В вашем <code className="bg-white px-1 py-0.5 rounded font-mono font-bold">docker-compose.yml</code> настроен именованный том <b>quiz_data:/app/data</b>. Это гарантирует, что база SQLite (<code className="font-mono">quiz.db</code>), вопросы и хеш пароля никогда не удалятся даже при <code className="font-mono">docker compose down</code> или пересборке образов.
+            </p>
+          </div>
+        </div>
+      )
+    },
+    {
+      number: '07',
       title: 'Проведение викторины в чате',
       icon: <CheckCircle2 className="w-5 h-5 text-violet-600" />,
       content: (

@@ -1,6 +1,7 @@
 import express from "express";
 import path from "path";
 import fs from "fs";
+import crypto from "node:crypto";
 import { createServer as createViteServer } from "vite";
 
 const DEFAULT_QUESTIONS_BACKUP = [
@@ -106,9 +107,85 @@ const DEFAULT_QUESTIONS_BACKUP = [
   }
 ];
 
-const DATA_DIR = path.join(process.cwd(), "data");
+const DATA_DIR = process.env.DATA_DIR || path.join(process.cwd(), "data");
 const QUESTIONS_FILE = path.join(DATA_DIR, "questions.json");
 const DB_FILE = path.join(DATA_DIR, "quiz.db");
+const AUTH_FILE = path.join(DATA_DIR, "auth.json");
+
+// Хранилище активных токенов авторизованных администраторов
+const activeAdminTokens = new Set<string>();
+
+function hashPassword(password: string, salt?: string): { hash: string; salt: string } {
+  const saltToUse = salt || crypto.randomBytes(16).toString("hex");
+  const hash = crypto.pbkdf2Sync(password, saltToUse, 10000, 64, "sha512").toString("hex");
+  return { hash, salt: saltToUse };
+}
+
+function isAuthRequired(): boolean {
+  const envPass = process.env.ADMIN_PASSWORD;
+  if (envPass && envPass.trim().length > 0) {
+    return true;
+  }
+  if (fs.existsSync(AUTH_FILE)) {
+    try {
+      const raw = fs.readFileSync(AUTH_FILE, "utf-8");
+      const data = JSON.parse(raw);
+      return Boolean(data.hash && data.salt);
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
+function verifyAdminPassword(password: string): boolean {
+  const envPass = process.env.ADMIN_PASSWORD;
+  if (envPass && envPass.trim().length > 0) {
+    return password.trim() === envPass.trim();
+  }
+  if (fs.existsSync(AUTH_FILE)) {
+    try {
+      const raw = fs.readFileSync(AUTH_FILE, "utf-8");
+      const data = JSON.parse(raw);
+      if (data.hash && data.salt) {
+        const calculated = crypto.pbkdf2Sync(password.trim(), data.salt, 10000, 64, "sha512").toString("hex");
+        return calculated === data.hash;
+      }
+    } catch (e) {
+      console.error("Error reading auth file:", e);
+    }
+  }
+  return false;
+}
+
+function checkIsAuthenticated(req: express.Request): boolean {
+  if (!isAuthRequired()) return true;
+
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith("Bearer ")) {
+    const token = authHeader.substring(7).trim();
+    if (activeAdminTokens.has(token)) return true;
+    // Разрешаем использование ADMIN_PASSWORD напрямую в заголовке Bearer для скриптов/бота
+    if (process.env.ADMIN_PASSWORD && token === process.env.ADMIN_PASSWORD.trim()) return true;
+  }
+
+  const customKey = req.headers["x-admin-password"] || req.headers["x-admin-key"];
+  if (typeof customKey === "string" && verifyAdminPassword(customKey)) {
+    return true;
+  }
+
+  return false;
+}
+
+function requireAuth(req: express.Request, res: express.Response, next: express.NextFunction) {
+  if (checkIsAuthenticated(req)) {
+    return next();
+  }
+  res.status(401).json({
+    error: "Доступ ограничен. Требуется пароль администратора.",
+    needAuth: true
+  });
+}
 
 interface DbQuestion {
   id: string;
@@ -371,6 +448,96 @@ async function startServer() {
     });
   });
 
+  // GET /api/auth/status - Проверка состояния защиты паролем и авторизации текущей сессии
+  app.get("/api/auth/status", (req, res) => {
+    res.json({
+      isProtected: isAuthRequired(),
+      isAuthenticated: checkIsAuthenticated(req),
+      hasEnvPassword: Boolean(process.env.ADMIN_PASSWORD && process.env.ADMIN_PASSWORD.trim().length > 0)
+    });
+  });
+
+  // POST /api/auth/login - Авторизация по паролю администратора
+  app.post("/api/auth/login", (req, res) => {
+    const { password } = req.body || {};
+    if (!isAuthRequired()) {
+      const token = crypto.randomBytes(32).toString("hex");
+      activeAdminTokens.add(token);
+      res.json({ success: true, token });
+      return;
+    }
+
+    if (typeof password === "string" && verifyAdminPassword(password)) {
+      const token = crypto.randomBytes(32).toString("hex");
+      activeAdminTokens.add(token);
+      res.json({ success: true, token });
+      return;
+    }
+
+    res.status(401).json({ error: "Неверный пароль администратора" });
+  });
+
+  // POST /api/auth/logout - Выход из сессии администратора
+  app.post("/api/auth/logout", (req, res) => {
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith("Bearer ")) {
+      const token = authHeader.substring(7).trim();
+      activeAdminTokens.delete(token);
+    }
+    res.json({ success: true });
+  });
+
+  // POST /api/auth/set-password - Установка или смена пароля администратора
+  app.post("/api/auth/set-password", (req, res) => {
+    if (isAuthRequired() && !checkIsAuthenticated(req)) {
+      res.status(401).json({ error: "Для изменения пароля войдите в систему" });
+      return;
+    }
+
+    if (process.env.ADMIN_PASSWORD && process.env.ADMIN_PASSWORD.trim().length > 0) {
+      res.status(400).json({ error: "Пароль уже зафиксирован в файле .env через переменную ADMIN_PASSWORD" });
+      return;
+    }
+
+    const { password } = req.body || {};
+    if (!password || typeof password !== "string" || password.trim().length < 4) {
+      res.status(400).json({ error: "Пароль должен быть не менее 4 символов" });
+      return;
+    }
+
+    const { hash, salt } = hashPassword(password.trim());
+    try {
+      if (!fs.existsSync(DATA_DIR)) {
+        fs.mkdirSync(DATA_DIR, { recursive: true });
+      }
+      fs.writeFileSync(AUTH_FILE, JSON.stringify({ hash, salt, updatedAt: new Date().toISOString() }, null, 2), "utf-8");
+      const token = crypto.randomBytes(32).toString("hex");
+      activeAdminTokens.add(token);
+      res.json({ success: true, token });
+    } catch (err) {
+      console.error("Failed to save auth file:", err);
+      res.status(500).json({ error: "Не удалось сохранить пароль на диск" });
+    }
+  });
+
+  // POST /api/auth/remove-password - Отключение защиты паролем
+  app.post("/api/auth/remove-password", requireAuth, (_req, res) => {
+    if (process.env.ADMIN_PASSWORD && process.env.ADMIN_PASSWORD.trim().length > 0) {
+      res.status(400).json({ error: "Нельзя отключить пароль, заданный в .env через ADMIN_PASSWORD" });
+      return;
+    }
+
+    try {
+      if (fs.existsSync(AUTH_FILE)) {
+        fs.unlinkSync(AUTH_FILE);
+      }
+      res.json({ success: true });
+    } catch (err) {
+      console.error("Failed to delete auth file:", err);
+      res.status(500).json({ error: "Не удалось отключить пароль" });
+    }
+  });
+
   // GET /api/db/status - Информация о состоянии SQLite БД
   app.get("/api/db/status", (_req, res) => {
     const questions = loadQuestionsFromStorage();
@@ -404,7 +571,7 @@ async function startServer() {
   });
 
   // POST /api/questions - Сохраняет полный обновлённый список вопросов в БД и JSON
-  app.post("/api/questions", (req, res) => {
+  app.post("/api/questions", requireAuth, (req, res) => {
     try {
       const body = req.body;
       const questionsToSave = Array.isArray(body) ? body : (body?.questions || []);
@@ -429,7 +596,7 @@ async function startServer() {
   });
 
   // POST /api/questions/add - Добавление одного вопроса напрямую в БД (удобный API)
-  app.post("/api/questions/add", (req, res) => {
+  app.post("/api/questions/add", requireAuth, (req, res) => {
     try {
       const { text, type, points, answers, explanation } = req.body || {};
       if (!text || !answers) {
@@ -453,7 +620,7 @@ async function startServer() {
   });
 
   // POST /api/questions/import - Пакетное добавление вопросов в БД
-  app.post("/api/questions/import", (req, res) => {
+  app.post("/api/questions/import", requireAuth, (req, res) => {
     try {
       const { items } = req.body || {};
       if (!Array.isArray(items) || items.length === 0) {
@@ -502,7 +669,7 @@ async function startServer() {
   });
 
   // DELETE /api/questions/:id - Удаление вопроса из БД по id
-  app.delete("/api/questions/:id", (req, res) => {
+  app.delete("/api/questions/:id", requireAuth, (req, res) => {
     try {
       const id = req.params.id;
       deleteQuestionFromDb(id);
@@ -792,7 +959,7 @@ async function startServer() {
   });
 
   // POST /api/questions/install-pack - Установка готового пака в SQLite БД
-  app.post("/api/questions/install-pack", (req, res) => {
+  app.post("/api/questions/install-pack", requireAuth, (req, res) => {
     try {
       const { packId } = req.body || {};
       const pack = CURATED_PACKS.find(p => p.id === packId);

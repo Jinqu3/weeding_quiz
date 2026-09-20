@@ -252,9 +252,13 @@ def load_questions_from_source() -> int:
     # 3. Если файл не найден, пробуем получить из Web UI API
     if QUESTIONS_API_URL:
         try:
+            req_headers = {"User-Agent": "TelegramQuizBot/1.0", "Accept": "application/json"}
+            admin_pwd = os.environ.get("ADMIN_PASSWORD")
+            if admin_pwd:
+                req_headers["Authorization"] = f"Bearer {admin_pwd.strip()}"
             req = urllib.request.Request(
                 QUESTIONS_API_URL,
-                headers={"User-Agent": "TelegramQuizBot/1.0", "Accept": "application/json"}
+                headers=req_headers
             )
             with urllib.request.urlopen(req, timeout=3) as resp:
                 if resp.status == 200:

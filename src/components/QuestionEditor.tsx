@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect } from 'react';
 import { Question, QuestionType, DbStatus } from '../types';
+import { getAuthHeader } from '../services/auth';
 import {
   Plus,
   Trash2,
@@ -226,7 +227,10 @@ export function QuestionEditor({
     try {
       const res = await fetch('/api/questions/install-pack', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...getAuthHeader(),
+        },
         body: JSON.stringify({ packId: pack.id })
       });
 

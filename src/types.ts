@@ -52,3 +52,9 @@ export interface ChatMessage {
   type?: 'text' | 'question' | 'correct' | 'wrong' | 'already_answered' | 'stat' | 'system';
   awardedPoints?: number;
 }
+
+export interface AuthStatus {
+  isProtected: boolean;
+  isAuthenticated: boolean;
+  hasEnvPassword?: boolean;
+}

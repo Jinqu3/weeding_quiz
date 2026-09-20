@@ -1,4 +1,18 @@
-import { MessageSquare, ListPlus, Code2, BookOpen, Bot, RefreshCw, CheckCircle2, HardDrive, Database } from 'lucide-react';
+import {
+  MessageSquare,
+  ListPlus,
+  Code2,
+  BookOpen,
+  Bot,
+  RefreshCw,
+  CheckCircle2,
+  HardDrive,
+  Database,
+  ShieldCheck,
+  ShieldAlert,
+  LogOut
+} from 'lucide-react';
+import { AuthStatus } from '../types';
 
 export type ActiveTab = 'simulator' | 'questions' | 'code' | 'guide';
 
@@ -7,9 +21,20 @@ interface HeaderProps {
   onSelectTab: (tab: ActiveTab) => void;
   questionsCount: number;
   syncStatus?: 'synced' | 'saving' | 'offline';
+  authStatus?: AuthStatus;
+  onOpenSecurity?: () => void;
+  onLogout?: () => void;
 }
 
-export function Header({ activeTab, onSelectTab, questionsCount, syncStatus = 'synced' }: HeaderProps) {
+export function Header({
+  activeTab,
+  onSelectTab,
+  questionsCount,
+  syncStatus = 'synced',
+  authStatus,
+  onOpenSecurity,
+  onLogout
+}: HeaderProps) {
   return (
     <header className="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-xs">
       <div className="max-w-7xl mx-auto px-4 sm:px-6">
@@ -56,6 +81,31 @@ export function Header({ activeTab, onSelectTab, questionsCount, syncStatus = 's
                     <span>Локальный режим</span>
                   </span>
                 )}
+
+                {/* Security Status Badge & Button */}
+                {authStatus && (
+                  <button
+                    onClick={onOpenSecurity}
+                    className={`text-[10px] font-bold px-2 py-0.5 rounded-md border flex items-center gap-1 transition-all hover:scale-105 cursor-pointer ${
+                      authStatus.isProtected
+                        ? 'bg-emerald-50 border-emerald-300 text-emerald-800 hover:bg-emerald-100'
+                        : 'bg-amber-50 border-amber-300 text-amber-900 hover:bg-amber-100'
+                    }`}
+                    title="Настройки защиты доступа и постоянного тома (Volume)"
+                  >
+                    {authStatus.isProtected ? (
+                      <>
+                        <ShieldCheck className="w-3 h-3 text-emerald-600" />
+                        <span>Защищено паролем</span>
+                      </>
+                    ) : (
+                      <>
+                        <ShieldAlert className="w-3 h-3 text-amber-600" />
+                        <span>Свободный доступ</span>
+                      </>
+                    )}
+                  </button>
+                )}
               </div>
               <p className="text-xs text-slate-500">
                 Конструктор викторины, авто-синхронизация с ботом и запуск в Docker
@@ -63,61 +113,74 @@ export function Header({ activeTab, onSelectTab, questionsCount, syncStatus = 's
             </div>
           </div>
 
-          {/* Nav Tabs */}
-          <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200 overflow-x-auto">
-            <button
-              onClick={() => onSelectTab('simulator')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${
-                activeTab === 'simulator'
-                  ? 'bg-white text-indigo-600 shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <MessageSquare className="w-3.5 h-3.5" />
-              Симулятор чата
-            </button>
+          {/* Right controls: Nav Tabs & Logout */}
+          <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200 overflow-x-auto">
+              <button
+                onClick={() => onSelectTab('simulator')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${
+                  activeTab === 'simulator'
+                    ? 'bg-white text-indigo-600 shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <MessageSquare className="w-3.5 h-3.5" />
+                Симулятор чата
+              </button>
 
-            <button
-              onClick={() => onSelectTab('questions')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${
-                activeTab === 'questions'
-                  ? 'bg-white text-indigo-600 shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <ListPlus className="w-3.5 h-3.5" />
-              Вопросы
-              <span className="bg-slate-200 text-slate-700 text-[10px] px-1.5 py-0.2 rounded-full">
-                {questionsCount}
-              </span>
-            </button>
+              <button
+                onClick={() => onSelectTab('questions')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${
+                  activeTab === 'questions'
+                    ? 'bg-white text-indigo-600 shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <ListPlus className="w-3.5 h-3.5" />
+                Вопросы
+                <span className="bg-slate-200 text-slate-700 text-[10px] px-1.5 py-0.2 rounded-full">
+                  {questionsCount}
+                </span>
+              </button>
 
-            <button
-              onClick={() => onSelectTab('code')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${
-                activeTab === 'code'
-                  ? 'bg-white text-indigo-600 shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <Code2 className="w-3.5 h-3.5" />
-              Python-код aiogram
-            </button>
+              <button
+                onClick={() => onSelectTab('code')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${
+                  activeTab === 'code'
+                    ? 'bg-white text-indigo-600 shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <Code2 className="w-3.5 h-3.5" />
+                Python-код aiogram
+              </button>
 
-            <button
-              onClick={() => onSelectTab('guide')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${
-                activeTab === 'guide'
-                  ? 'bg-white text-indigo-600 shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <BookOpen className="w-3.5 h-3.5" />
-              Гайд по запуску
-            </button>
+              <button
+                onClick={() => onSelectTab('guide')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${
+                  activeTab === 'guide'
+                    ? 'bg-white text-indigo-600 shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <BookOpen className="w-3.5 h-3.5" />
+                Гайд по запуску
+              </button>
+            </div>
+
+            {authStatus?.isProtected && authStatus?.isAuthenticated && onLogout && (
+              <button
+                onClick={onLogout}
+                className="p-2 text-slate-400 hover:text-rose-600 rounded-xl hover:bg-rose-50 border border-transparent hover:border-rose-200 transition-colors"
+                title="Выйти из сессии администратора"
+              >
+                <LogOut className="w-4 h-4" />
+              </button>
+            )}
           </div>
         </div>
       </div>
     </header>
   );
 }
+

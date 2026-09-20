@@ -7,11 +7,14 @@ services:
     container_name: quiz_web_ui
     restart: unless-stopped
     ports:
+      # Для защиты от внешнего доступа через Nginx раскомментируйте: "127.0.0.1:3000:3000"
       - "3000:3000"
     volumes:
-      - ./data:/app/data
+      # 💾 ИМЕНОВАННЫЙ ТОМ: данные SQLite quiz.db, questions.json и auth.json сохраняются навсегда!
+      - quiz_data:/app/data
     environment:
       - NODE_ENV=production
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
 
   # 🤖 Telegram-бот (aiogram 3)
   bot:
@@ -23,8 +26,16 @@ services:
     depends_on:
       - web
     volumes:
-      - ./data:/app/data
+      # Общий именованный том с базой SQLite quiz.db
+      - quiz_data:/app/data
     environment:
       - BOT_TOKEN=${BOT_TOKEN}
       - QUESTIONS_FILE_PATH=/app/data/questions.json
       - QUESTIONS_API_URL=http://web:3000/api/questions
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
+
+# 💾 Постоянный том Docker (Persistent Volume)
+# Не удаляется при `docker compose down`, пересборках образов или перезагрузках сервера!
+volumes:
+  quiz_data:
+    driver: local
