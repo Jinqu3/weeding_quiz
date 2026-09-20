@@ -1,11 +1,8 @@
 import express from "express";
 import path from "path";
 import fs from "fs";
-import { createRequire } from "module";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
-
-const require = createRequire(import.meta.url);
 
 const DEFAULT_QUESTIONS_BACKUP = [
   {
@@ -106,28 +103,34 @@ interface DbQuestion {
 
 let sqliteDb: any = null;
 
-function initDatabase(): void {
+async function initDatabase(): Promise<void> {
   try {
     if (!fs.existsSync(DATA_DIR)) {
       fs.mkdirSync(DATA_DIR, { recursive: true });
     }
 
     try {
-      const { DatabaseSync } = require("node:sqlite");
-      sqliteDb = new DatabaseSync(DB_FILE);
-      sqliteDb.exec(`
-        CREATE TABLE IF NOT EXISTS questions (
-          id TEXT PRIMARY KEY,
-          text TEXT NOT NULL,
-          type TEXT NOT NULL,
-          points INTEGER NOT NULL,
-          answers TEXT NOT NULL,
-          explanation TEXT DEFAULT '',
-          sort_order INTEGER NOT NULL,
-          created_at TEXT DEFAULT CURRENT_TIMESTAMP
-        );
-      `);
-      console.log("✅ SQLite database connected successfully at:", DB_FILE);
+      // Dynamic import works across ESM and CommonJS in modern Node
+      const sqliteModule = await import("node:sqlite").catch(() => null);
+      const DatabaseSync = sqliteModule?.DatabaseSync;
+      if (DatabaseSync) {
+        sqliteDb = new DatabaseSync(DB_FILE);
+        sqliteDb.exec(`
+          CREATE TABLE IF NOT EXISTS questions (
+            id TEXT PRIMARY KEY,
+            text TEXT NOT NULL,
+            type TEXT NOT NULL,
+            points INTEGER NOT NULL,
+            answers TEXT NOT NULL,
+            explanation TEXT DEFAULT '',
+            sort_order INTEGER NOT NULL,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+          );
+        `);
+        console.log("✅ SQLite database connected successfully at:", DB_FILE);
+      } else {
+        sqliteDb = null;
+      }
     } catch (dbErr) {
       console.warn("⚠️ node:sqlite not initialized:", dbErr);
       sqliteDb = null;
@@ -302,7 +305,7 @@ async function startServer() {
   app.use(express.json({ limit: "5mb" }));
 
   // Инициализация базы данных SQLite
-  initDatabase();
+  await initDatabase();
 
   // API Health Check
   app.get("/api/health", (_req, res) => {
