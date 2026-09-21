@@ -734,9 +734,10 @@ async def process_player_input(
 
                 correct_sample = question["answers"][0]
                 speed_joke = random.choice(SPEED_JOKES)
+                expl = f"\n💡 <i>{question['explanation']}</i>" if question.get("explanation") else ""
                 await reply_fn(
                     f"🎯 <b>В ТОЧКУ! БРАВО, {user_name}!</b>\n"
-                    f"Правильный ответ: <b>{correct_sample}</b>\n\n"
+                    f"Правильный ответ: <b>{correct_sample}</b>{expl}\n\n"
                     f"🎉 <b>ДЖЕКПОТ СКОРОСТИ!</b>: <b>+{question['points']} CasinoCoins 🪙</b>\n"
                     f"🎰 Баланс победителя: <b>{user_stat.points} фишек</b>\n"
                     f"{speed_joke}\n\n"
@@ -745,12 +746,30 @@ async def process_player_input(
                 )
                 return
             else:
-                wrong_joke = random.choice(WRONG_JOKES)
-                await reply_fn(
-                    f"❌ <b>Мимо, {user_name}!</b> {wrong_joke}\n"
-                    f"⚡ В вопросе на скорость даётся 1 попытка. Гонка продолжается!"
-                )
-                return
+                # Все игроки ответили неверно
+                all_answered = all(uid in state.attempted_user_ids for uid in state.registered_players.keys())
+                if all_answered:
+                    state.is_active = False
+                    correct_sample = question["answers"][0] if question.get("answers") else ""
+                    expl = f"\n💡 <i>{question['explanation']}</i>" if question.get("explanation") else ""
+                    wrong_joke = random.choice(WRONG_JOKES)
+                    await reply_fn(
+                        f"❌ <b>Мимо, {user_name}!</b>\n\n"
+                        f"🛑 <b>РАУНД НА СКОРОСТЬ ЗАКРЫТ!</b> 🏁\n"
+                        f"Все <b>{len(state.registered_players)}</b> игроков за столом ответили, но никто не назвал верный ответ!\n\n"
+                        f"🎯 Правильный ответ: <b>{correct_sample}</b>{expl}\n"
+                        f"💨 Все фишки остаются в кассе казино! 🏛️\n"
+                        f"{wrong_joke}\n\n"
+                        f"👉 <i>Крупье, отправьте /next для перехода к следующему вопросу!</i>"
+                    )
+                    return
+                else:
+                    wrong_joke = random.choice(WRONG_JOKES)
+                    await reply_fn(
+                        f"❌ <b>Мимо, {user_name}!</b> {wrong_joke}\n"
+                        f"⚡ В вопросе на скорость даётся 1 попытка. Гонка продолжается! (Ответили: {len(state.attempted_user_ids)}/{len(state.registered_players)})"
+                    )
+                    return
 
         # 2. ОБЩИЙ ВОПРОС ИЛИ ТЕСТ С ВЫБОРОМ ВАРИАНТА
         if is_correct:
