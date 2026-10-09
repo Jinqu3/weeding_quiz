@@ -462,7 +462,8 @@ export function TelegramSimulator({
       return;
     }
 
-    if (cmd === '/roulette' || cmd === '/spin' || cmd === '/рулетка') {
+    const [cmdName, ...cmdArgs] = cmd.trim().split(/\s+/);
+    if (cmdName === '/roulette' || cmdName === '/spin' || cmdName === '/рулетка') {
       if (!registeredUserIds.includes(activeUser.id)) {
         addBotMessage(
           `⚠️ <b>${activeUser.name}</b>, вы ещё не за игровым столом!\nСначала отправьте команду <b>/join</b>, чтобы вступить в викторину и заработать фишки!`,
@@ -484,37 +485,58 @@ export function TelegramSimulator({
 
       if (currentPoints <= 0) {
         addBotMessage(
-          `🚫 <b>${activeUser.name}</b>, ваш банкролл: <b>0 фишек</b> (CasinoCoins 🪙)!\n\nКазино в долг не кредитует, а под честное слово фишки на рулетку не ставятся! 🙅‍♂️\nСначала заработайте баллы правильными ответами по команде <b>/next</b>! 📚`,
+          `🚫 <b>${activeUser.name}</b>, ваш банкролл: <b>0 фишек</b> (CasinoCoins 🪙)!\n\nКазино в долг не кредитует. Сначала заработайте фишки правильными ответами по команде <b>/next</b>! 📚`,
           'system'
         );
         return;
       }
 
-      // Хитрый мультипликатор: взвешенное распределение, в ~86% уводящее в убыток или зеро
+      // Разбор размера ставки: /roulette [число | all] или ва-банк по умолчанию
+      let betAmount = currentPoints;
+      if (cmdArgs.length > 0) {
+        const arg = cmdArgs[0].toLowerCase();
+        if (['all', 'allin', 'всё', 'все', 'банк'].includes(arg)) {
+          betAmount = currentPoints;
+        } else {
+          const parsed = parseInt(arg, 10);
+          if (!isNaN(parsed)) {
+            betAmount = parsed;
+          }
+        }
+      }
+
+      if (betAmount <= 0) {
+        addBotMessage(`⚠️ Минимальная ставка на рулетке — 1 CasinoCoin 🪙!`, 'system');
+        return;
+      }
+
+      if (betAmount > currentPoints) {
+        addBotMessage(
+          `⚠️ <b>${activeUser.name}</b>, недостаточно фишек! Ваш баланс: <b>${currentPoints} 🪙</b>.\nУкажите сумму меньше или напишите <b>/roulette</b> для ставки ва-банк!`,
+          'system'
+        );
+        return;
+      }
+
+      // Лояльная и сбалансированная рулетка:
+      // ~64% шанс ничьей или выигрыша, мягкий риск при проигрыше,
+      // умеренные коэффициенты 1.1x–1.5x (редкий 2.0x), поэтому банкролл не раздувается!
       const weightedConfig = [
-        { mult: 0.0, weight: 14.0 }, // Сектор ЗЕРО: 14% шанс полного обнуления
-        { mult: 0.1, weight: 12.0 }, // -90%
-        { mult: 0.2, weight: 10.0 }, // -80%
-        { mult: 0.3, weight: 10.0 }, // -70%
-        { mult: 0.4, weight: 9.0 },  // -60%
-        { mult: 0.5, weight: 9.0 },  // -50%
-        { mult: 0.6, weight: 7.0 },  // -40%
-        { mult: 0.7, weight: 6.0 },  // -30%
-        { mult: 0.8, weight: 5.0 },  // -20%
-        { mult: 0.9, weight: 4.0 },  // -10%
-        // Суммарный убыток (< 1.0): 86%
-        { mult: 1.0, weight: 5.0 },  // Ничья: 5%
-        // Прибыль (> 1.0): всего ~9%
-        { mult: 1.1, weight: 2.0 },
-        { mult: 1.2, weight: 1.8 },
-        { mult: 1.3, weight: 1.5 },
-        { mult: 1.4, weight: 1.2 },
-        { mult: 1.5, weight: 1.0 },
-        { mult: 1.6, weight: 0.6 },
-        { mult: 1.7, weight: 0.4 },
-        { mult: 1.8, weight: 0.3 },
-        { mult: 1.9, weight: 0.15 },
-        { mult: 2.0, weight: 0.05 }, // Джекпот x2: 0.05%
+        { mult: 0.0, weight: 2.5 },  // Сектор ЗЕРО: редкий драматичный риск (2.5% вместо 14%)
+        { mult: 0.5, weight: 4.5 },  // Половина ставки
+        { mult: 0.7, weight: 7.0 },  // Мягкий откат -30%
+        { mult: 0.8, weight: 10.0 }, // -20%
+        { mult: 0.9, weight: 12.0 }, // -10%
+        // Суммарный убыток (< 1.0): 36.0%
+        { mult: 1.0, weight: 20.0 }, // Ничья / Возврат: 20.0%
+        // Прибыль (> 1.0): 44.0% (приятная и умеренная)
+        { mult: 1.1, weight: 15.0 }, // +10%
+        { mult: 1.2, weight: 12.0 }, // +20%
+        { mult: 1.3, weight: 8.0 },  // +30%
+        { mult: 1.4, weight: 4.5 },  // +40%
+        { mult: 1.5, weight: 2.5 },  // +50%
+        { mult: 1.7, weight: 1.0 },  // +70%
+        { mult: 2.0, weight: 1.0 },  // Двойной куш x2.0
       ];
 
       const totalWeight = weightedConfig.reduce((acc, item) => acc + item.weight, 0);
@@ -529,54 +551,71 @@ export function TelegramSimulator({
       }
 
       const mult = selectedItem.mult;
-      const newPoints = Math.round(currentPoints * mult);
-      const diff = newPoints - currentPoints;
+      const wonOrReturned = Math.round(betAmount * mult);
+      const diff = wonOrReturned - betAmount;
+      let newTotal = (currentPoints - betAmount) + wonOrReturned;
+
+      // Лояльная страховка: если баланс обнулился, казино начисляет 1 фишку!
+      let consolation = false;
+      if (newTotal <= 0) {
+        newTotal = 1;
+        consolation = true;
+      }
 
       // Update state
       const updatedScores = {
         ...scores,
         [activeUser.id]: {
           ...userScore,
-          points: newPoints
+          points: newTotal
         }
       };
       onUpdateScores(updatedScores);
 
+      const isAllIn = betAmount === currentPoints;
+      const betLabel = isAllIn
+        ? `<b>${betAmount} CasinoCoins 🪙 (ВСЕ ОЧКИ!)</b>`
+        : `<b>${betAmount} CasinoCoins 🪙</b>`;
+
       const zeroJokes = [
-        "💀 ЗЕРО! Шарик предательски запрыгнул в зелёный сектор! Все фишки сгорели дотла! Крупье сочувственно улыбается и сметает банк лопаткой 🧹",
-        "💸 Полное обнуление! Фортуна сегодня отвернулась и ушла пить кофе. Баланс 0 фишек! 💨",
-        "🧲 Невидимый магнит под зеленым сукном стола сработал безукоризненно! Казино не победить 🎩"
+        "💀 ЗЕРО! Шарик заскочил в сектор Зеро! Редчайшая неудача, но крупье дарит вам утешительную фишку! 🍀",
+        "💸 Сектор Зеро! Фортуна на миг отвлеклась, но игра не закончена! 🧹",
+        "🧲 Зелёный сектор сыграл! Зато нервы пощекотали на славу! 🎩"
       ];
       const lossJokes = [
-        "📉 Хитрый стол казино забрал своё! Множитель меньше единицы — банкролл заметно похудел 🏛️",
-        "😬 Меньше единицы — казино всегда в плюсе! Но часть фишек уцелела, держитесь! 🪙",
-        "🎲 Крупье незаметно подмигнул и подкрутил колесо! Легкий минус — это инвестиция в опыт 🧹",
-        "📉 Коварная гравитация заведения засосала часть фишек в фонд золотых унитазов 💸"
+        "📉 Небольшой откат — стол забрал скромную комиссию, но основной банк в целости! 🪙",
+        "😬 Мягкий минус — это инвестиция в будущую победу! 🎲",
+        "🎲 Крупье сочувственно кивнул: небольшая коррекция баланса, крутите ещё! 🍸"
       ];
       const winJokes = [
-        "📈 Куш в кармане! Невероятно, но вам удалось перехитрить хитрое колесо казино! 💰",
-        "✨ Охрана заведения напряглась: кто-то уносит прибыль вопреки теории вероятностей! 🥂🚨",
-        "🎩 Настоящий хайроллер! Колесо фортуны дрогнуло и выдало плюс! 🎰"
+        "📈 Приятный плюс в копилку! Фортуна благоволит аккуратным игрокам! 💰",
+        "✨ Ставка сыграла! Колесо фортуны стабильно начисляет прибыль! 🥂",
+        "🎩 Отличный расчет! Маленькие победы ведут к солидному банкроллу! 🎰",
+        "🪙 Звон фишек ласкает слух — чистый плюс на вашем счету! 🥳"
       ];
 
       let outcome = '';
       if (mult === 0.0) {
         const joke = zeroJokes[Math.floor(Math.random() * zeroJokes.length)];
-        outcome = `💥 <b>ПОЛНЫЙ КРАХ! СЕКТОР ЗЕРО (x0.0)!</b>\nВсе ваши <b>${currentPoints}</b> фишек сгорели дотла! 😱\nНовый банкролл: <b>0 CasinoCoins 🪙</b>\n\n${joke}`;
+        outcome = `💥 <b>СЕКТОР ЗЕРО (x0.0)!</b>\nСтавка в <b>${betAmount}</b> фишек уходит казино.\nТекущий банкролл: <b>${newTotal} CasinoCoins 🪙</b>\n\n${joke}`;
       } else if (mult < 1.0) {
         const joke = lossJokes[Math.floor(Math.random() * lossJokes.length)];
-        outcome = `📉 <b>УБЫТОК:</b> множитель <b>x${mult.toFixed(1)}</b>\nПотеряно: <b>-${Math.abs(diff)}</b> фишек.\nОсталось в кармане: <b>${newPoints} CasinoCoins 🪙</b>\n\n${joke}`;
+        outcome = `📉 <b>МЯГКИЙ ОТКАТ:</b> множитель <b>x${mult.toFixed(1)}</b>\nПотеряно со ставки: <b>-${Math.abs(diff)}</b> фишек.\nОсталось на балансе: <b>${newTotal} CasinoCoins 🪙</b>\n\n${joke}`;
       } else if (mult === 1.0) {
-        outcome = `🔄 <b>НИЧЬЯ С КАЗИНО:</b> множитель <b>x1.0</b>\nВаши <b>${currentPoints}</b> фишек вернулись без изменений!\nКрупье со вздохом протёр стол тряпочкой 🍸`;
+        outcome = `🔄 <b>НИЧЬЯ С КАЗИНО:</b> множитель <b>x1.0</b>\nВаша ставка <b>${betAmount} 🪙</b> полностью возвращена!\nБаланс: <b>${newTotal} CasinoCoins 🪙</b>\nКрупье со вздохом протёр сукно стола 🍸`;
       } else if (mult === 2.0) {
-        outcome = `🔥🎉 <b>ДЖЕКПОТ! МАКСИМАЛЬНЫЙ КУШ x2.0!</b> 🚀\nЧудо на 0.05%! Вы удвоили весь банк! Прибыль: <b>+${diff}</b> фишек! 🤑\nНовый банкролл: <b>${newPoints} CasinoCoins 🪙</b>!\nВладелец казино нервно пьёт валидол! 💥👑`;
+        outcome = `🔥🎉 <b>ДЖЕКПОТ! МАКСИМАЛЬНЫЙ КУШ x2.0!</b> 🚀\nВы удвоили ставку! Чистая прибыль: <b>+${diff}</b> фишек! 🤑\nНовый банкролл: <b>${newTotal} CasinoCoins 🪙</b>!\n\n👑 НЕВЕРОЯТНО! Колесо выдало максимум x2.0! Настоящий триумф за столом! 💥`;
       } else {
         const joke = winJokes[Math.floor(Math.random() * winJokes.length)];
-        outcome = `💰📈 <b>ПОБЕДА:</b> множитель <b>x${mult.toFixed(1)}</b>!\nЧистая прибыль: <b>+${diff}</b> фишек!\nНовый банкролл: <b>${newPoints} CasinoCoins 🪙</b>!\n\n${joke}`;
+        outcome = `💰📈 <b>ПОБЕДА:</b> множитель <b>x${mult.toFixed(1)}</b>!\nЧистая прибыль: <b>+${diff}</b> фишек!\nНовый банкролл: <b>${newTotal} CasinoCoins 🪙</b>!\n\n${joke}`;
+      }
+
+      if (consolation) {
+        outcome += `\n\n🍀 <i>Страховка казино: крупье выдал вам 1 утешительную фишку на удачу!</i>`;
       }
 
       addBotMessage(
-        `🎰 <b>ХИТРАЯ РУЛЕТКА: СТАВКА ВА-БАНК!</b> 🔴⚫🟢\n👤 Игрок: <b>${activeUser.name}</b>\n💰 Ставка: <b>${currentPoints} CasinoCoins 🪙 (ВСЕ ОЧКИ!)</b>\n\n🎡 <i>Шарик с треском крутится по колесу рулетки...</i>\n🎯 <b>Выпавший мультипликатор: x${mult.toFixed(1)}</b>\n\n${outcome}`,
+        `🎰 <b>ЛОЯЛЬНАЯ РУЛЕТКА КАЗИНО!</b> 🔴⚫🟢\n👤 Игрок: <b>${activeUser.name}</b>\n💰 Ставка: ${betLabel}\n\n🎡 <i>Шарик с мягким шелестом катится по колесу...</i>\n🎯 <b>Выпавший мультипликатор: x${mult.toFixed(1)}</b>\n\n${outcome}`,
         mult >= 1.0 ? 'correct' : 'wrong'
       );
       return;
@@ -584,7 +623,7 @@ export function TelegramSimulator({
 
     if (cmd === '/start') {
       addBotMessage(
-        `👋 <b>Добро пожаловать в Интеллектуальное Казино!</b> 🎰\n\nКаждое очко = 1 фишка CasinoCoin 🪙.\n\nКоманды:\n/join — сесть за стол (участвовать)\n/leave — выйти из-за стола (очки сохраняются!)\n/players — список игроков за столом\n/next — следующий вопрос и фишки\n/current — текущий вопрос и статус\n/roulette — сыграть в рулетку ва-банк (множитель 0.0 – 2.0)\n/stat — баланс фишек и лидеры\n/reset — сбросить всё`
+        `👋 <b>Добро пожаловать в Интеллектуальное Казино!</b> 🎰\n\nКаждое очко = 1 фишка CasinoCoin 🪙.\n\nКоманды:\n/join — сесть за стол (участвовать)\n/leave — выйти из-за стола (очки сохраняются!)\n/players — список игроков за столом\n/next — следующий вопрос и фишки\n/current — текущий вопрос и статус\n/roulette [число] — сыграть в лояльную рулетку (по умолчанию ва-банк)\n/stat — баланс фишек и лидеры\n/reset — сбросить всё`
       );
       return;
     }
@@ -1144,11 +1183,11 @@ export function TelegramSimulator({
           </button>
           <button
             onClick={() => handleSendMessage('/roulette')}
-            className="flex-shrink-0 inline-flex items-center gap-1 px-3 py-1 bg-rose-50 hover:bg-rose-100 text-rose-800 font-bold text-xs rounded-lg border border-rose-200 transition-colors"
-            title="Поставить все очки на рулетку (множитель 0.0 – 2.0)"
+            className="flex-shrink-0 inline-flex items-center gap-1 px-3 py-1 bg-amber-50 hover:bg-amber-100 text-amber-900 font-bold text-xs rounded-lg border border-amber-200 transition-colors"
+            title="Крутить лояльную рулетку (/roulette или /roulette [число])"
           >
             <span>🎰</span>
-            /roulette (Ва-банк)
+            /roulette (Рулетка)
           </button>
           <button
             onClick={() => handleSendMessage('/current')}
@@ -1394,51 +1433,64 @@ export function TelegramSimulator({
           )}
         </div>
 
-        {/* Roulette All-In Card */}
-        <div className="bg-gradient-to-br from-rose-50 via-amber-50 to-orange-50 rounded-2xl border border-rose-200 p-5 shadow-xs">
+        {/* Roulette Card */}
+        <div className="bg-gradient-to-br from-amber-50 via-rose-50 to-orange-50 rounded-2xl border border-amber-200 p-5 shadow-xs">
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
               <span className="text-xl">🎡</span>
               <div>
-                <h4 className="text-xs font-bold uppercase tracking-wider text-rose-950">
-                  Хитрая рулетка (House Edge)
+                <h4 className="text-xs font-bold uppercase tracking-wider text-amber-950">
+                  Лояльная рулетка казино
                 </h4>
-                <p className="text-[11px] text-rose-800">
-                  Коварное колесо: ~86% уводит в убыток или зеро!
+                <p className="text-[11px] text-amber-800">
+                  Сбалансированный азарт: ~64% шанс ничьей или плюса!
                 </p>
               </div>
             </div>
-            <span className="text-[10px] font-bold bg-rose-200/70 text-rose-900 px-2 py-0.5 rounded-full">
-              0.0x – 2.0x (Хитрый)
+            <span className="text-[10px] font-bold bg-amber-200/80 text-amber-900 px-2 py-0.5 rounded-full">
+              0.0x – 2.0x (Лояльный)
             </span>
           </div>
 
           <p className="text-xs text-slate-700 leading-relaxed">
-            Команда <code className="bg-white px-1.5 py-0.5 rounded text-rose-700 font-mono font-bold border border-rose-200">/roulette</code> ставит <b>все очки</b> ва-банк. Мультипликатор <b>хитро взвешен по законам казино</b>: в большинстве случаев шарик падает в убыточные сектора (от 0.1 до 0.9) или в сектор Зеро (0.0x)!
+            Команда <code className="bg-white px-1.5 py-0.5 rounded text-amber-800 font-mono font-bold border border-amber-200">/roulette</code> ставит фишки ва-банк, а <code className="bg-white px-1.5 py-0.5 rounded text-amber-800 font-mono font-bold border border-amber-200">/roulette 25</code> позволяет указать точную ставку! Баланс защищён от инфляции: частые умеренные плюсы (+10%..+50%) и редкий шанс Зеро (всего 2.5%) со страховкой!
           </p>
 
           <div className="mt-3 grid grid-cols-3 gap-1.5 text-center text-[10px]">
             <div className="bg-white/80 p-1.5 rounded-lg border border-rose-200">
-              <span className="text-rose-700 font-bold block">0.0x – 0.9x (~86%)</span>
-              <span className="text-slate-500">Убыток / Зеро 💸</span>
+              <span className="text-rose-700 font-bold block">0.0x – 0.9x (~36%)</span>
+              <span className="text-slate-500">Мягкий откат 💸</span>
             </div>
             <div className="bg-white/80 p-1.5 rounded-lg border border-amber-200">
-              <span className="text-amber-700 font-bold block">1.0x (~5%)</span>
-              <span className="text-slate-500">Возврат фишек</span>
+              <span className="text-amber-700 font-bold block">1.0x (20%)</span>
+              <span className="text-slate-500">Возврат ставки 🔄</span>
             </div>
             <div className="bg-white/80 p-1.5 rounded-lg border border-emerald-200">
-              <span className="text-emerald-700 font-bold block">1.1x – 2.0x (~9%)</span>
-              <span className="text-slate-500">Редкий куш 🍀</span>
+              <span className="text-emerald-700 font-bold block">1.1x – 2.0x (44%)</span>
+              <span className="text-slate-500">Умеренный плюс 🍀</span>
             </div>
           </div>
 
-          <button
-            onClick={() => handleSendMessage('/roulette')}
-            className="w-full mt-3.5 py-2 px-3 bg-gradient-to-r from-rose-600 to-amber-600 hover:from-rose-700 hover:to-amber-700 text-white font-bold text-xs rounded-xl shadow-xs transition-all flex items-center justify-center gap-2"
-          >
-            <span>🎰</span>
-            <span>Крутить за {activeUser.name} ({scores[activeUser.id]?.points || 0} 🪙)</span>
-          </button>
+          <div className="mt-3.5 flex gap-2">
+            <button
+              onClick={() => handleSendMessage('/roulette')}
+              className="flex-1 py-2 px-3 bg-gradient-to-r from-amber-600 to-rose-600 hover:from-amber-700 hover:to-rose-700 text-white font-bold text-xs rounded-xl shadow-xs transition-all flex items-center justify-center gap-1.5"
+            >
+              <span>🎰</span>
+              <span>Ва-банк ({scores[activeUser.id]?.points || 0} 🪙)</span>
+            </button>
+            <button
+              onClick={() => {
+                const pts = scores[activeUser.id]?.points || 0;
+                const safeBet = Math.max(1, Math.floor(pts / 2));
+                handleSendMessage(`/roulette ${safeBet}`);
+              }}
+              className="py-2 px-3 bg-white hover:bg-slate-50 text-slate-700 font-bold text-xs rounded-xl border border-slate-200 shadow-xs transition-all flex items-center justify-center gap-1"
+              title="Сделать безопасную ставку в половину баланса"
+            >
+              <span>🪙 50%</span>
+            </button>
+          </div>
         </div>
 
         {/* Active Question Mechanics Box */}

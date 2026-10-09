@@ -308,28 +308,53 @@ RANK_TITLES = [
     "📉 Срочно требуется беспроцентный микрозайм"
 ]
 
+# Лояльная и сбалансированная рулетка:
+# Частые победы и ничьи (~64% шанс ничьей или плюса),
+# мягкий риск при проигрыше (редко уходит в сильный минус),
+# умеренные призовые коэффициенты (1.1x–1.5x, редкий 2.0x),
+# поэтому банкролл не раздувается бесконтрольно!
 ROULETTE_WEIGHTED_CONFIG = [
-    (0.0, 14.0),
-    (0.1, 12.0),
-    (0.2, 10.0),
-    (0.3, 10.0),
-    (0.4, 9.0),
-    (0.5, 9.0),
-    (0.6, 7.0),
-    (0.7, 6.0),
-    (0.8, 5.0),
-    (0.9, 4.0),
-    (1.0, 5.0),
-    (1.1, 2.0),
-    (1.2, 1.8),
-    (1.3, 1.5),
-    (1.4, 1.2),
-    (1.5, 1.0),
-    (1.6, 0.6),
-    (1.7, 0.4),
-    (1.8, 0.3),
-    (1.9, 0.15),
-    (2.0, 0.05),
+    (0.0, 2.5),   # Сектор ЗЕРО: редкий драматичный риск (2.5%)
+    (0.5, 4.5),   # Минус половина ставки (4.5%)
+    (0.7, 7.0),   # Мягкий минус -30% (7.0%)
+    (0.8, 10.0),  # Легкий минус -20% (10.0%)
+    (0.9, 12.0),  # Микро-минус -10% (12.0%)
+    # Суммарный убыток (< 1.0): 36.0%
+
+    (1.0, 20.0),  # Ничья / Возврат ставки: 20.0% (фишки сохраняются)
+
+    # Прибыль (> 1.0): 44.0% (приятные умеренные плюсы)
+    (1.1, 15.0),  # +10% фишек (15.0%)
+    (1.2, 12.0),  # +20% фишек (12.0%)
+    (1.3, 8.0),   # +30% фишек (8.0%)
+    (1.4, 4.5),   # +40% фишек (4.5%)
+    (1.5, 2.5),   # +50% фишек (2.5%)
+    (1.7, 1.0),   # +70% фишек (1.0%)
+    (2.0, 1.0),   # Двойной куш x2.0 (1.0%)
+]
+
+ROULETTE_ZERO_JOKES = [
+    "💀 ЗЕРО! Шарик заскочил в сектор Зеро! Редчайшая неудача, но крупье дарит вам утешительную фишку! 🍀",
+    "💸 Сектор Зеро! Фортуна на миг отвлеклась, но игра не закончена! 🧹",
+    "🧲 Зелёный сектор сыграл! Зато нервы пощекотали на славу! 🎩"
+]
+
+ROULETTE_LOSS_JOKES = [
+    "📉 Небольшой откат — стол забрал скромную комиссию, но основной банк в целости! 🪙",
+    "😬 Мягкий минус — это инвестиция в будущую победу! 🎲",
+    "🎲 Крупье сочувственно кивнул: небольшая коррекция баланса, крутите ещё! 🍸"
+]
+
+ROULETTE_WIN_JOKES = [
+    "📈 Приятный плюс в копилку! Фортуна благоволит аккуратным игрокам! 💰",
+    "✨ Ставка сыграла! Колесо фортуны стабильно начисляет прибыль! 🥂",
+    "🎩 Отличный расчет! Маленькие победы ведут к солидному банкроллу! 🎰",
+    "🪙 Звон фишек ласкает слух — чистый плюс на вашем счету! 🥳"
+]
+
+ROULETTE_JACKPOT_JOKES = [
+    "🔥 ДЖЕКПОТ! МАКСИМАЛЬНЫЙ КУШ x2.0! Удвоение ставки! Весь зал аплодирует! 🚀🎉",
+    "👑 НЕВЕРОЯТНО! Колесо выдало максимум x2.0! Настоящий триумф за столом! 💥"
 ]
 
 def spin_roulette_wheel() -> float:
@@ -377,7 +402,7 @@ async def cmd_start(message: Message):
         "3. <b>/next</b> — Выдать следующий вопрос (крупье).\n"
         "4. <b>/stat</b> — Таблица лидеров и банкролл CasinoCoins 🪙\n"
         "5. <b>/reload</b> — Синхронизировать вопросы из Web UI!\n"
-        "6. <b>/roulette</b> — Коварная рулетка ва-банк!\n\n"
+        "6. <b>/roulette [ставка]</b> — Лояльная рулетка казино (ставка или ва-банк)!\n\n"
         "Все фишки 1:1 конвертируются в реальные ставки!"
     )
     await message.answer(text)
@@ -608,7 +633,7 @@ async def cmd_stat(message: Message):
         )
     await message.answer("\n".join(lines))
 
-@router.message(Command("roulette"))
+@router.message(Command("roulette", "spin", "рулетка"))
 async def cmd_roulette(message: Message):
     state = get_chat_state(message.chat.id)
     user = message.from_user
@@ -618,20 +643,104 @@ async def cmd_roulette(message: Message):
     async with state.lock:
         stat = state.registered_players.get(user.id) or state.bankroll_archive.get(user.id)
         if not stat or stat.points <= 0:
-            await message.reply("У вас 0 фишек! Заработайте фишки в викторине.")
+            await message.reply(
+                f"🚫 <b>{user.full_name}</b>, ваш банкролл: <b>0 фишек</b> (CasinoCoins 🪙)!\n"
+                f"Казино в долг не кредитует. Сначала заработайте фишки ответами в викторине (/next)!"
+            )
             return
 
-        old_points = stat.points
-        multiplier = spin_roulette_wheel()
-        new_points = int(round(old_points * multiplier))
-        stat.points = new_points
+        current_points = stat.points
 
-        await message.reply(
-            f"🎰 <b>РУЛЕТКА ВА-БАНК!</b>\n\n"
-            f"Ставка: <b>{old_points} 🪙</b>\n"
-            f"Множитель: <b>{multiplier:.1f}x</b>\n"
-            f"Итог: <b>{new_points} CasinoCoins 🪙</b>"
+        # Определение размера ставки: /roulette [число | all] или ва-банк по умолчанию
+        parts = (message.text or "").split()
+        bet_amount = current_points
+        if len(parts) > 1:
+            arg = parts[1].strip().lower()
+            if arg in ("all", "allin", "всё", "все", "банк"):
+                bet_amount = current_points
+            elif arg.isdigit():
+                bet_amount = int(arg)
+
+        if bet_amount <= 0:
+            await message.reply("⚠️ Минимальная ставка на рулетке — 1 CasinoCoin 🪙!")
+            return
+
+        if bet_amount > current_points:
+            await message.reply(
+                f"⚠️ Недостаточно фишек! Ваш баланс: <b>{current_points} 🪙</b>.\n"
+                f"Укажите сумму меньше или напишите <b>/roulette</b> для ставки ва-банк!"
+            )
+            return
+
+        multiplier = spin_roulette_wheel()
+        won_or_returned = int(round(bet_amount * multiplier))
+        diff = won_or_returned - bet_amount
+        new_total = (current_points - bet_amount) + won_or_returned
+
+        # Лояльная страховка: если баланс упал до 0, казино дарит 1 фишку!
+        consolation = False
+        if new_total <= 0:
+            new_total = 1
+            consolation = True
+
+        stat.points = new_total
+
+    is_all_in = (bet_amount == current_points)
+    bet_label = f"<b>{bet_amount} CasinoCoins 🪙 (ВСЕ ОЧКИ!)</b>" if is_all_in else f"<b>{bet_amount} CasinoCoins 🪙</b>"
+
+    wheel_header = (
+        f"🎰 <b>ЛОЯЛЬНАЯ РУЛЕТКА КАЗИНО!</b> 🔴⚫🟢\n"
+        f"👤 Игрок: <b>{user.full_name}</b>\n"
+        f"💰 Ставка: {bet_label}\n\n"
+        f"🎡 <i>Шарик с мягким шелестом катится по колесу...</i>\n"
+        f"🎯 <b>Выпавший мультипликатор: x{multiplier:.1f}</b>\n\n"
+    )
+
+    if multiplier == 0.0:
+        joke = random.choice(ROULETTE_ZERO_JOKES)
+        outcome = (
+            f"💥 <b>СЕКТОР ЗЕРО (x0.0)!</b>\n"
+            f"Ставка в <b>{bet_amount}</b> фишек уходит казино.\n"
+            f"Текущий банкролл: <b>{stat.points} CasinoCoins 🪙</b>\n\n"
+            f"{joke}"
         )
+    elif multiplier < 1.0:
+        joke = random.choice(ROULETTE_LOSS_JOKES)
+        lost = abs(diff)
+        outcome = (
+            f"📉 <b>МЯГКИЙ ОТКАТ:</b> множитель <b>x{multiplier:.1f}</b>\n"
+            f"Потеряно со ставки: <b>-{lost}</b> фишек.\n"
+            f"Осталось на балансе: <b>{stat.points} CasinoCoins 🪙</b>\n\n"
+            f"{joke}"
+        )
+    elif multiplier == 1.0:
+        outcome = (
+            f"🔄 <b>НИЧЬЯ С КАЗИНО:</b> множитель <b>x1.0</b>\n"
+            f"Ваша ставка <b>{bet_amount} 🪙</b> полностью возвращена!\n"
+            f"Баланс: <b>{stat.points} CasinoCoins 🪙</b>\n"
+            f"Крупье со вздохом протёр сукно стола 🍸"
+        )
+    elif multiplier == 2.0:
+        joke = random.choice(ROULETTE_JACKPOT_JOKES)
+        outcome = (
+            f"🔥🎉 <b>ДЖЕКПОТ! МАКСИМАЛЬНЫЙ КУШ x2.0!</b> 🚀\n"
+            f"Вы удвоили ставку! Чистая прибыль: <b>+{diff}</b> фишек! 🤑\n"
+            f"Новый банкролл: <b>{stat.points} CasinoCoins 🪙</b>!\n\n"
+            f"{joke}"
+        )
+    else:
+        joke = random.choice(ROULETTE_WIN_JOKES)
+        outcome = (
+            f"💰📈 <b>ПОБЕДА:</b> множитель <b>x{multiplier:.1f}</b>!\n"
+            f"Чистая прибыль: <b>+{diff}</b> фишек!\n"
+            f"Новый банкролл: <b>{stat.points} CasinoCoins 🪙</b>!\n\n"
+            f"{joke}"
+        )
+
+    if consolation:
+        outcome += "\n\n🍀 <i>Страховка казино: крупье выдал вам 1 утешительную фишку на удачу!</i>"
+
+    await message.reply(wheel_header + outcome)
 
 @router.message(Command("reset"))
 async def cmd_reset(message: Message):
