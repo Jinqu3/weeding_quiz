@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { Question, QuestionType, DbStatus } from '../types';
 import { getAuthHeader } from '../services/auth';
 import {
@@ -23,7 +23,13 @@ import {
   Lightbulb,
   ExternalLink,
   ListOrdered,
-  Loader2
+  Loader2,
+  UploadCloud,
+  Copy,
+  CheckCheck,
+  HardDrive,
+  FileJson,
+  AlertCircle
 } from 'lucide-react';
 
 interface QuestionEditorProps {
@@ -87,6 +93,16 @@ export function QuestionEditor({
   const [packs, setPacks] = useState<CuratedPack[]>([]);
   const [installingPackId, setInstallingPackId] = useState<string | null>(null);
   const [packNotification, setPackNotification] = useState<string | null>(null);
+
+  // Drag & Drop / File Import & Migration state
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+  const [isDragOver, setIsDragOver] = useState(false);
+  const [importedFileQuestions, setImportedFileQuestions] = useState<Question[] | null>(null);
+  const [importFileName, setImportFileName] = useState<string>('');
+  const [importMode, setImportMode] = useState<'replace' | 'append'>('replace');
+  const [importError, setImportError] = useState<string | null>(null);
+  const [isCopiedJson, setIsCopiedJson] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Загружаем список доступных паков с сервера
   useEffect(() => {
@@ -426,6 +442,105 @@ export function QuestionEditor({
     URL.revokeObjectURL(url);
   };
 
+  const handleCopyJson = () => {
+    try {
+      navigator.clipboard.writeText(JSON.stringify(questions, null, 2));
+      setIsCopiedJson(true);
+      setTimeout(() => setIsCopiedJson(false), 2000);
+    } catch {
+      // ignore
+    }
+  };
+
+  const handleProcessJsonFile = (file: File) => {
+    setImportError(null);
+    if (!file.name.toLowerCase().endsWith('.json') && file.type !== 'application/json') {
+      setImportError('Пожалуйста, выберите файл в формате .json (например, questions.json)');
+      setIsImportModalOpen(true);
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const text = e.target?.result as string;
+        const parsed = JSON.parse(text);
+        let items: any[] = [];
+        if (Array.isArray(parsed)) {
+          items = parsed;
+        } else if (parsed && Array.isArray(parsed.questions)) {
+          items = parsed.questions;
+        } else if (parsed && Array.isArray(parsed.items)) {
+          items = parsed.items;
+        } else {
+          setImportError('В JSON файле не найден массив вопросов (ожидается [ { "text": "...", "answers": [...] } ])');
+          setIsImportModalOpen(true);
+          return;
+        }
+
+        const validQuestions: Question[] = items
+          .filter((item: any) => item && (item.text || item.question))
+          .map((item: any, idx: number) => {
+            let answers: string[] = [];
+            if (Array.isArray(item.answers)) answers = item.answers.map(String);
+            else if (typeof item.answers === 'string') answers = [item.answers];
+            else if (Array.isArray(item.answer)) answers = item.answer.map(String);
+            else if (typeof item.answer === 'string') answers = [item.answer];
+            else answers = ['Ответ'];
+
+            return {
+              id: item.id || `imported_${Date.now()}_${idx}`,
+              text: String(item.text || item.question || '').trim(),
+              type: item.type === 'choice' ? 'choice' : item.type === 'first' ? 'first' : 'general',
+              points: Number(item.points) || 10,
+              answers: answers.length > 0 ? answers : ['Ответ'],
+              explanation: item.explanation ? String(item.explanation) : '',
+              options: Array.isArray(item.options) ? item.options.map(String) : undefined,
+              correctOptionIndex: typeof item.correctOptionIndex === 'number' ? item.correctOptionIndex : undefined,
+            };
+          });
+
+        if (validQuestions.length === 0) {
+          setImportError('В файле не обнаружено подходящих вопросов с текстом и ответами.');
+          setIsImportModalOpen(true);
+          return;
+        }
+
+        setImportFileName(file.name);
+        setImportedFileQuestions(validQuestions);
+        setIsImportModalOpen(true);
+      } catch (err: any) {
+        setImportError(`Ошибка разбора JSON файла: ${err.message || 'Некорректный синтаксис'}`);
+        setIsImportModalOpen(true);
+      }
+    };
+    reader.onerror = () => {
+      setImportError('Не удалось прочитать выбранный файл.');
+      setIsImportModalOpen(true);
+    };
+    reader.readAsText(file);
+  };
+
+  const handleApplyFileImport = () => {
+    if (!importedFileQuestions || importedFileQuestions.length === 0) return;
+
+    let finalQuestions: Question[] = [];
+    if (importMode === 'replace') {
+      finalQuestions = importedFileQuestions;
+    } else {
+      finalQuestions = [...questions, ...importedFileQuestions];
+    }
+
+    onUpdateQuestions(finalQuestions);
+    setPackNotification(
+      `✅ Успешно импортировано ${importedFileQuestions.length} вопросов (${importMode === 'replace' ? 'заменили все старые' : 'добавили к списку'})!`
+    );
+    setIsImportModalOpen(false);
+    setImportedFileQuestions(null);
+    setImportFileName('');
+    if (onRefreshDbStatus) onRefreshDbStatus();
+  };
+
   // Фильтрация и поиск вопросов
   const filteredQuestions = useMemo(() => {
     return questions.filter(q => {
@@ -449,7 +564,52 @@ export function QuestionEditor({
   }, [questions, typeFilter, searchQuery]);
 
   return (
-    <div className="max-w-5xl mx-auto space-y-6">
+    <div
+      onDragOver={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setIsDragOver(true);
+      }}
+      onDragLeave={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setIsDragOver(false);
+      }}
+      onDrop={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setIsDragOver(false);
+        if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+          handleProcessJsonFile(e.dataTransfer.files[0]);
+        }
+      }}
+      className="max-w-5xl mx-auto space-y-6 relative"
+    >
+      {/* Hidden file input for manual JSON selection */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".json,application/json"
+        className="hidden"
+        onChange={(e) => {
+          if (e.target.files && e.target.files.length > 0) {
+            handleProcessJsonFile(e.target.files[0]);
+            e.target.value = '';
+          }
+        }}
+      />
+
+      {/* Floating Drag & Drop Overlay */}
+      {isDragOver && (
+        <div className="fixed inset-0 z-50 bg-indigo-950/85 backdrop-blur-xs flex flex-col items-center justify-center p-6 text-white border-4 border-dashed border-indigo-300">
+          <UploadCloud className="w-16 h-16 text-indigo-300 animate-bounce mb-4" />
+          <h2 className="text-2xl font-bold">Отпустите questions.json для переноса!</h2>
+          <p className="text-sm text-indigo-200 mt-2 max-w-md text-center">
+            Все вопросы из файла будут прочитаны и подготовлены для записи в SQLite базу данных.
+          </p>
+        </div>
+      )}
+
       {/* Top Banner with SQLite DB Status and Quick Action Buttons */}
       <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
@@ -472,6 +632,20 @@ export function QuestionEditor({
 
         {/* Quick Action Buttons */}
         <div className="flex flex-wrap items-center gap-2">
+          {/* 0. Перенос данных / Drag & Drop JSON */}
+          <button
+            onClick={() => {
+              setIsImportModalOpen(true);
+              setIsPacksOpen(false);
+              setIsBulkOpen(false);
+            }}
+            className="inline-flex items-center gap-1.5 text-xs font-bold text-indigo-700 hover:text-indigo-900 bg-indigo-50 hover:bg-indigo-100 px-3 py-2 rounded-lg transition-colors border border-indigo-200 shadow-2xs"
+            title="Перетащить файл questions.json или экспортировать базу"
+          >
+            <UploadCloud className="w-3.5 h-3.5 text-indigo-600" />
+            <span>Перенос / Drag&Drop</span>
+          </button>
+
           {/* 1. Добавить вопрос с выбором варианта */}
           <button
             onClick={() => startNew('choice')}
@@ -519,6 +693,260 @@ export function QuestionEditor({
           </button>
         </div>
       </div>
+
+      {/* --- MODAL: IMPORT & MIGRATION (DRAG & DROP JSON) --- */}
+      {isImportModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl max-w-2xl w-full shadow-2xl border border-slate-200 overflow-hidden my-8">
+            {/* Header */}
+            <div className="bg-gradient-to-r from-indigo-900 via-indigo-800 to-slate-900 text-white p-5 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-white/10 flex items-center justify-center border border-white/20">
+                  <UploadCloud className="w-5 h-5 text-indigo-200" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-white flex items-center gap-2">
+                    Перенос и импорт данных вопросов
+                  </h3>
+                  <p className="text-xs text-indigo-200">
+                    Быстрый перенос между версиями бота, резервные копии и синхронизация
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  setIsImportModalOpen(false);
+                  setImportedFileQuestions(null);
+                  setImportError(null);
+                  setImportFileName('');
+                }}
+                className="text-white/70 hover:text-white p-1 rounded-lg hover:bg-white/10"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-5">
+              {/* Info block explaining where data lives */}
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 text-xs space-y-2">
+                <div className="font-bold text-slate-800 flex items-center gap-1.5 text-sm">
+                  <HardDrive className="w-4 h-4 text-indigo-600" />
+                  Где физически хранятся ваши вопросы:
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-slate-600">
+                  <div className="bg-white p-2.5 rounded-lg border border-slate-200">
+                    <span className="font-mono font-bold text-indigo-600">data/questions.json</span>
+                    <p className="text-[11px] text-slate-500 mt-0.5">
+                      Основной файл в корне проекта. Бот и сервер всегда считывают его.
+                    </p>
+                  </div>
+                  <div className="bg-white p-2.5 rounded-lg border border-slate-200">
+                    <span className="font-mono font-bold text-emerald-600">data/quiz.db</span>
+                    <p className="text-[11px] text-slate-500 mt-0.5">
+                      База данных SQLite (таблица questions) для мгновенных запросов.
+                    </p>
+                  </div>
+                </div>
+                <p className="text-[11px] text-slate-500 pt-1">
+                  💡 При обновлении на новую версию вы можете просто скачать <span className="font-mono font-bold text-slate-700">questions.json</span> и перетащить его в это окно!
+                </p>
+              </div>
+
+              {/* Drag and Drop Zone */}
+              <div
+                onClick={() => fileInputRef.current?.click()}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+                    handleProcessJsonFile(e.dataTransfer.files[0]);
+                  }
+                }}
+                className="border-2 border-dashed border-indigo-300 hover:border-indigo-500 bg-indigo-50/40 hover:bg-indigo-50/80 rounded-xl p-6 text-center cursor-pointer transition-all space-y-2 group"
+              >
+                <div className="w-12 h-12 mx-auto rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600 group-hover:scale-110 transition-transform">
+                  <FileJson className="w-6 h-6" />
+                </div>
+                <div>
+                  <p className="text-sm font-bold text-slate-800">
+                    Перетащите сюда файл <span className="text-indigo-600">questions.json</span>
+                  </p>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    или нажмите для выбора файла с компьютера
+                  </p>
+                </div>
+                <div className="inline-block text-[11px] font-semibold text-indigo-600 bg-indigo-100/70 px-2.5 py-1 rounded-md">
+                  Поддерживается формат JSON (массив вопросов с текстом и ответами)
+                </div>
+              </div>
+
+              {/* Error display */}
+              {importError && (
+                <div className="bg-rose-50 border border-rose-200 text-rose-800 text-xs px-3.5 py-2.5 rounded-xl font-medium flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                  <span>{importError}</span>
+                </div>
+              )}
+
+              {/* Parsed questions preview & Mode selection */}
+              {importedFileQuestions && (
+                <div className="bg-emerald-50/70 border border-emerald-300 rounded-xl p-4 space-y-3 animate-in fade-in">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <CheckCircle2 className="w-5 h-5 text-emerald-600" />
+                      <div>
+                        <span className="text-xs font-bold text-emerald-950">
+                          Файл распознан: {importFileName}
+                        </span>
+                        <p className="text-[11px] text-emerald-800">
+                          Найдено готовых вопросов: <b>{importedFileQuestions.length}</b>
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Mode selector */}
+                  <div className="bg-white p-3 rounded-lg border border-emerald-200 space-y-2">
+                    <div className="text-xs font-bold text-slate-700">
+                      Как применить импорт к текущей базе ({questions.length} вопр.):
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                      <label
+                        className={`flex items-start gap-2 p-2.5 rounded-lg border cursor-pointer transition-colors ${
+                          importMode === 'replace'
+                            ? 'border-indigo-600 bg-indigo-50/50 text-indigo-950 font-bold'
+                            : 'border-slate-200 text-slate-600 hover:bg-slate-50'
+                        }`}
+                      >
+                        <input
+                          type="radio"
+                          name="importMode"
+                          checked={importMode === 'replace'}
+                          onChange={() => setImportMode('replace')}
+                          className="mt-0.5 text-indigo-600"
+                        />
+                        <div>
+                          <div>Заменить все вопросы</div>
+                          <div className="text-[10px] font-normal text-slate-500">
+                            Полный перенос: старые заменяются на {importedFileQuestions.length} из файла
+                          </div>
+                        </div>
+                      </label>
+
+                      <label
+                        className={`flex items-start gap-2 p-2.5 rounded-lg border cursor-pointer transition-colors ${
+                          importMode === 'append'
+                            ? 'border-indigo-600 bg-indigo-50/50 text-indigo-950 font-bold'
+                            : 'border-slate-200 text-slate-600 hover:bg-slate-50'
+                        }`}
+                      >
+                        <input
+                          type="radio"
+                          name="importMode"
+                          checked={importMode === 'append'}
+                          onChange={() => setImportMode('append')}
+                          className="mt-0.5 text-indigo-600"
+                        />
+                        <div>
+                          <div>Добавить к текущим</div>
+                          <div className="text-[10px] font-normal text-slate-500">
+                            Объединить: итого станет {questions.length + importedFileQuestions.length} вопросов
+                          </div>
+                        </div>
+                      </label>
+                    </div>
+                  </div>
+
+                  {/* Question preview sample */}
+                  <div className="bg-white/80 p-3 rounded-lg border border-emerald-200 text-xs space-y-1">
+                    <div className="text-[11px] font-bold text-slate-600">
+                      Примеры вопросов из файла:
+                    </div>
+                    <ul className="text-[11px] text-slate-600 space-y-1 list-disc pl-4">
+                      {importedFileQuestions.slice(0, 3).map((q, i) => (
+                        <li key={i} className="truncate">
+                          <b>{q.text}</b> (ответ: {q.answers.join(', ')})
+                        </li>
+                      ))}
+                      {importedFileQuestions.length > 3 && (
+                        <li className="text-slate-400 italic">
+                          ...и ещё {importedFileQuestions.length - 3} вопросов
+                        </li>
+                      )}
+                    </ul>
+                  </div>
+
+                  <div className="flex justify-end gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => setImportedFileQuestions(null)}
+                      className="px-3 py-1.5 text-xs text-slate-600 hover:text-slate-900 bg-white border border-slate-200 rounded-lg"
+                    >
+                      Выбрать другой файл
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleApplyFileImport}
+                      className="px-4 py-1.5 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg shadow-xs inline-flex items-center gap-1.5"
+                    >
+                      <Check className="w-3.5 h-3.5" />
+                      Записать в базу ({importedFileQuestions.length} вопр.)
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Quick actions: Backup / Download / Copy */}
+              <div className="border-t border-slate-100 pt-4">
+                <div className="text-xs font-bold text-slate-700 mb-2.5">
+                  Экспорт текущих данных на диск:
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  <button
+                    type="button"
+                    onClick={handleExportJson}
+                    className="inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-semibold text-slate-700 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-lg border border-slate-200 transition-colors"
+                  >
+                    <Download className="w-3.5 h-3.5 text-slate-500" />
+                    <span>Скачать questions.json</span>
+                  </button>
+
+                  <a
+                    href="/api/db/export-db"
+                    download="quiz.db"
+                    className="inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-semibold text-emerald-800 hover:text-emerald-900 bg-emerald-50 hover:bg-emerald-100 rounded-lg border border-emerald-200 transition-colors"
+                  >
+                    <Database className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>Скачать quiz.db (SQLite)</span>
+                  </a>
+
+                  <button
+                    type="button"
+                    onClick={handleCopyJson}
+                    className="inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-semibold text-indigo-700 hover:text-indigo-900 bg-indigo-50 hover:bg-indigo-100 rounded-lg border border-indigo-200 transition-colors"
+                  >
+                    {isCopiedJson ? (
+                      <>
+                        <CheckCheck className="w-3.5 h-3.5 text-emerald-600" />
+                        <span>Скопировано!</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="w-3.5 h-3.5 text-indigo-600" />
+                        <span>Скопировать JSON</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Notification Banner */}
       {packNotification && (
@@ -1009,19 +1437,44 @@ export function QuestionEditor({
 
           <div className="flex items-center gap-1.5">
             <button
+              onClick={() => setIsImportModalOpen(true)}
+              className="text-xs text-indigo-700 hover:text-indigo-900 font-semibold flex items-center gap-1 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 px-2.5 py-1.5 rounded-lg shadow-2xs"
+              title="Импортировать или перетащить файл questions.json"
+            >
+              <UploadCloud className="w-3 h-3 text-indigo-600" />
+              <span>Импорт / Drag&Drop</span>
+            </button>
+            <button
               onClick={handleExportJson}
-              className="text-xs text-slate-600 hover:text-slate-900 flex items-center gap-1 bg-white border border-slate-200 px-2.5 py-1.5 rounded-lg"
-              title="Скачать вопросы в JSON формате"
+              className="text-xs text-slate-700 hover:text-slate-900 flex items-center gap-1 bg-white border border-slate-200 px-2.5 py-1.5 rounded-lg hover:bg-slate-50"
+              title="Скачать файл questions.json на компьютер"
             >
               <Download className="w-3 h-3 text-slate-500" />
-              <span className="hidden sm:inline">JSON</span>
+              <span>Скачать JSON</span>
+            </button>
+            <button
+              onClick={handleCopyJson}
+              className="text-xs text-slate-700 hover:text-slate-900 flex items-center gap-1 bg-white border border-slate-200 px-2.5 py-1.5 rounded-lg hover:bg-slate-50"
+              title="Скопировать все вопросы в буфер обмена"
+            >
+              {isCopiedJson ? (
+                <>
+                  <CheckCheck className="w-3 h-3 text-emerald-600" />
+                  <span className="text-emerald-700">Скопировано!</span>
+                </>
+              ) : (
+                <>
+                  <Copy className="w-3 h-3 text-slate-500" />
+                  <span className="hidden sm:inline">Копировать</span>
+                </>
+              )}
             </button>
             <button
               onClick={onResetToDefaults}
-              className="text-xs text-slate-600 hover:text-slate-900 flex items-center gap-1 bg-white border border-slate-200 px-2.5 py-1.5 rounded-lg"
+              className="text-xs text-slate-500 hover:text-rose-700 flex items-center gap-1 bg-white border border-slate-200 px-2.5 py-1.5 rounded-lg hover:bg-rose-50"
               title="Восстановить исходные вопросы"
             >
-              <RotateCcw className="w-3 h-3 text-slate-500" />
+              <RotateCcw className="w-3 h-3 text-slate-400" />
               <span className="hidden sm:inline">Сброс</span>
             </button>
           </div>

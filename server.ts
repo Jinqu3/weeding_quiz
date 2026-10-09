@@ -570,6 +570,29 @@ async function startServer() {
     }
   });
 
+  // GET /api/questions/export-file - Скачивание файла questions.json напрямую с сервера
+  app.get("/api/questions/export-file", (_req, res) => {
+    try {
+      const questions = loadQuestionsFromStorage();
+      const payload = JSON.stringify(questions, null, 2);
+      res.setHeader("Content-Disposition", 'attachment; filename="questions.json"');
+      res.setHeader("Content-Type", "application/json; charset=utf-8");
+      res.send(payload);
+    } catch (err) {
+      console.error("Failed to export questions file:", err);
+      res.status(500).json({ error: "Failed to export questions file" });
+    }
+  });
+
+  // GET /api/db/export-db - Скачивание файла SQLite базы data/quiz.db
+  app.get("/api/db/export-db", (_req, res) => {
+    if (fs.existsSync(DB_FILE)) {
+      res.download(DB_FILE, "quiz.db");
+    } else {
+      res.status(404).json({ error: "Файл базы данных quiz.db не найден на сервере" });
+    }
+  });
+
   // POST /api/questions - Сохраняет полный обновлённый список вопросов в БД и JSON
   app.post("/api/questions", requireAuth, (req, res) => {
     try {
